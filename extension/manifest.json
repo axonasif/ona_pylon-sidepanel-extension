@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "Gitpod Side Panel for Pylon",
+  "version": "1.0.0",
+  "description": "Opens Gitpod in a Chrome side panel when browsing Pylon issues.",
+  "permissions": [
+    "sidePanel",
+    "activeTab",
+    "declarativeNetRequest",
+    "declarativeNetRequestWithHostAccess"
+  ],
+  "host_permissions": [
+    "https://app.gitpod.io/*",
+    "https://app.usepylon.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://app.usepylon.com/issues*"],
+      "js": ["content.js"],
+      "css": ["content.css"]
+    }
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "strip_headers",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "Open Gitpod Side Panel"
+  }
+}
