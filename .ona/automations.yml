@@ -24,21 +24,22 @@ services:
 
 tasks:
     load-extension:
-        name: Launch Chrome with extension loaded
-        description: Opens Chrome with the side panel extension pre-loaded
-        commands:
-            start: |
-                # Wait for VNC desktop to be ready
-                until pgrep xfdesktop 1>/dev/null; do sleep 1; done
-                sleep 2
-
-                # Launch Chrome with the extension loaded
-                google-chrome \
-                  --no-first-run \
-                  --disable-default-apps \
-                  --load-extension=/workspace/ona_pylon-sidepanel-extension/extension \
-                  https://app.usepylon.com/issues &
-
-                echo "Chrome launched with extension loaded. Open the VNC desktop (port 5901) to interact."
         triggeredBy:
           - manual
+        name: Launch Chrome with extension loaded
+        description: Opens Chrome with the side panel extension pre-loaded
+        command: |
+
+            # Wait for VNC desktop to be ready
+            until pgrep xfdesktop 1>/dev/null; do sleep 1; done
+            sleep 2
+
+            # Launch Chrome with the extension loaded
+            google-chrome \
+                --no-first-run \
+                --disable-default-apps \
+                --load-extension=/workspace/ona_pylon-sidepanel-extension/extension \
+                https://app.usepylon.com/issues &
+
+            echo "Chrome launched with extension loaded. Open the VNC desktop (port 5901) to interact."
+    

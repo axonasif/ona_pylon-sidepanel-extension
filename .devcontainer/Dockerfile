@@ -84,3 +84,5 @@ BASH
     sudo chmod +x /usr/bin/vnc
 
 SCRIPT
+
+RUN npm install -g chrome-devtools-mcp@0.21.0
