@@ -3,86 +3,225 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Gitpod</title>
+  <title>Ona</title>
   <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
+    :root {
+      color-scheme: dark;
+      --bg: #101115;
+      --panel: #17191f;
+      --panel-strong: #1f232c;
+      --border: #2a2f39;
+      --text: #f6f7fb;
+      --muted: #9aa3b2;
+      --accent: #ffb45b;
+      --accent-text: #20170b;
+      --danger: #ff8a8a;
+      --danger-bg: rgba(255, 138, 138, 0.12);
+      --shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
     }
 
-    html, body {
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html,
+    body {
       width: 100%;
       height: 100%;
       overflow: hidden;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #0d0d0d;
+      background: radial-gradient(circle at top, #1b2130 0%, var(--bg) 48%);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+    }
+
+    button {
+      font: inherit;
     }
 
     .toolbar {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      height: 40px;
+      min-height: 48px;
       padding: 0 12px;
-      background: #1a1a1a;
-      border-bottom: 1px solid #2a2a2a;
-      color: #e0e0e0;
-      font-size: 13px;
-      user-select: none;
+      background: rgba(16, 17, 21, 0.92);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(12px);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+      z-index: 2;
     }
 
     .toolbar-left {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 10px;
     }
 
     .toolbar-logo {
       width: 18px;
       height: 18px;
       border-radius: 4px;
+      flex: none;
+    }
+
+    .toolbar-copy {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
     }
 
     .toolbar-title {
-      font-weight: 500;
-      color: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .toolbar-subtitle {
+      font-size: 11px;
+      color: var(--muted);
     }
 
     .toolbar-actions {
       display: flex;
-      gap: 4px;
+      gap: 6px;
     }
 
     .toolbar-btn {
-      background: none;
-      border: none;
-      color: #999;
+      min-width: 30px;
+      min-height: 30px;
+      padding: 0 8px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--muted);
       cursor: pointer;
-      padding: 4px 8px;
-      border-radius: 4px;
-      font-size: 12px;
-      transition: background 0.15s, color 0.15s;
+      transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
     }
 
-    .toolbar-btn:hover {
-      background: #333;
-      color: #fff;
+    .toolbar-btn:hover:not(:disabled) {
+      background: var(--panel-strong);
+      border-color: var(--border);
+      color: var(--text);
+    }
+
+    .toolbar-btn:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+
+    .panel {
+      min-height: 0;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 12px;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .status-card {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 18px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent), var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+    }
+
+    .status-card[data-tone="danger"] {
+      border-color: rgba(255, 138, 138, 0.28);
+      background: linear-gradient(180deg, rgba(255, 138, 138, 0.05), transparent), var(--panel);
+    }
+
+    .status-eyebrow {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    .status-eyebrow[data-tone="danger"] {
+      color: var(--danger);
+    }
+
+    .status-title {
+      font-size: 20px;
+      line-height: 1.2;
+      font-weight: 700;
+    }
+
+    .status-body {
+      font-size: 14px;
+      line-height: 1.55;
+      color: var(--muted);
+    }
+
+    .status-meta {
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--muted);
+      word-break: break-word;
+    }
+
+    .primary-btn {
+      align-self: flex-start;
+      min-height: 38px;
+      padding: 0 14px;
+      border: none;
+      border-radius: 10px;
+      background: var(--accent);
+      color: var(--accent-text);
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
+      box-shadow: 0 10px 20px rgba(255, 180, 91, 0.22);
+    }
+
+    .primary-btn:hover:not(:disabled) {
+      transform: translateY(-1px);
+    }
+
+    .primary-btn:disabled {
+      opacity: 0.55;
+      cursor: default;
+      box-shadow: none;
+    }
+
+    .frame-shell {
+      position: relative;
+      min-height: 0;
+      flex: 1;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+      background: var(--panel);
+      box-shadow: var(--shadow);
     }
 
     .loading-overlay {
       position: absolute;
-      top: 40px;
-      left: 0;
-      right: 0;
-      bottom: 0;
+      inset: 0;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      background: #0d0d0d;
-      z-index: 10;
-      transition: opacity 0.3s;
+      gap: 12px;
+      background: rgba(16, 17, 21, 0.84);
+      z-index: 2;
+      transition: opacity 0.22s ease;
     }
 
     .loading-overlay.hidden {
@@ -91,29 +230,66 @@
     }
 
     .spinner {
-      width: 32px;
-      height: 32px;
-      border: 3px solid #333;
-      border-top-color: #FFB45B;
+      width: 34px;
+      height: 34px;
+      border: 3px solid rgba(255, 255, 255, 0.12);
+      border-top-color: var(--accent);
       border-radius: 50%;
       animation: spin 0.8s linear infinite;
     }
 
     .loading-text {
-      margin-top: 12px;
-      color: #888;
+      max-width: 260px;
+      text-align: center;
       font-size: 13px;
-    }
-
-    @keyframes spin {
-      to { transform: rotate(360deg); }
+      line-height: 1.5;
+      color: var(--muted);
     }
 
     iframe {
       width: 100%;
-      height: calc(100% - 40px);
+      height: 100%;
       border: none;
       background: #0d0d0d;
+    }
+
+    .debug-panel {
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: rgba(18, 20, 26, 0.88);
+      overflow: hidden;
+    }
+
+    .debug-panel summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 12px 14px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .debug-panel summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .debug-copy {
+      max-height: 220px;
+      overflow: auto;
+      padding: 0 14px 14px;
+      color: #d6deeb;
+      font-size: 11px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
     }
   </style>
 </head>
@@ -124,7 +300,10 @@
         <rect width="32" height="32" rx="6" fill="#FFB45B"/>
         <path d="M10 20V12L16 8L22 12V20L16 24L10 20Z" fill="#0d0d0d"/>
       </svg>
-      <span class="toolbar-title">Gitpod</span>
+      <div class="toolbar-copy">
+        <span class="toolbar-title">Ona for Pylon</span>
+        <span class="toolbar-subtitle" id="toolbar-subtitle">Waiting for issue context</span>
+      </div>
     </div>
     <div class="toolbar-actions">
       <button class="toolbar-btn" id="btn-reload" title="Reload">↻</button>
@@ -132,16 +311,32 @@
     </div>
   </div>
 
-  <div class="loading-overlay" id="loading">
-    <div class="spinner"></div>
-    <div class="loading-text">Loading Gitpod…</div>
-  </div>
+  <div class="panel">
+    <section class="status-card" id="status-view">
+      <div class="status-eyebrow" id="status-eyebrow">Resolving</div>
+      <h1 class="status-title" id="status-title">Preparing Ona</h1>
+      <p class="status-body" id="status-body">Checking the active Pylon tab and your saved Ona conversation.</p>
+      <p class="status-meta hidden" id="status-meta"></p>
+      <button class="primary-btn hidden" id="primary-action"></button>
+    </section>
 
-  <iframe
-    id="gitpod-frame"
-    src="https://app.gitpod.io"
-    allow="clipboard-read; clipboard-write"
-  ></iframe>
+    <div class="frame-shell hidden" id="frame-shell">
+      <div class="loading-overlay" id="loading">
+        <div class="spinner"></div>
+        <div class="loading-text" id="loading-text">Loading Ona…</div>
+      </div>
+      <iframe
+        id="gitpod-frame"
+        src="about:blank"
+        allow="clipboard-read; clipboard-write"
+      ></iframe>
+    </div>
+
+    <details class="debug-panel" id="debug-panel">
+      <summary>Debug</summary>
+      <pre class="debug-copy" id="debug-json">Waiting for debug data…</pre>
+    </details>
+  </div>
 
   <script src="sidepanel.js"></script>
 </body>
