@@ -1,4 +1,5 @@
 const GITPOD_ORIGIN = "https://app.gitpod.io";
+const PYLON_ORIGIN = "https://app.usepylon.com";
 const DEFAULT_REPO_URL = "https://github.com/gitpod-io/gitpod-next";
 const searchParams = new URLSearchParams(window.location.search);
 const allowExtensionDebugFallback = searchParams.get("dev") === "1";
@@ -120,6 +121,13 @@ function getDesiredState() {
   }
 
   if (snapshot.activeTabIsPylon === false) {
+    if (snapshot.reverseIssueNumber) {
+      return {
+        visualState: "reverse",
+        issueNumber: snapshot.reverseIssueNumber,
+        targetUrl: snapshot.reversePylonUrl || null,
+      };
+    }
     return { visualState: "not-pylon", issueNumber: null, targetUrl: null };
   }
 
@@ -236,6 +244,10 @@ function getOpenTargetUrl(desiredState) {
     return snapshot?.currentIframeUrl || desiredState.targetUrl || GITPOD_ORIGIN;
   }
 
+  if (desiredState.visualState === "reverse") {
+    return desiredState.targetUrl || snapshot?.reversePylonUrl || PYLON_ORIGIN;
+  }
+
   if (desiredState.issueNumber) {
     return snapshot?.savedConversationUrl || desiredState.targetUrl || buildCreateConversationUrl(desiredState.issueNumber);
   }
@@ -269,6 +281,19 @@ function render() {
         meta: "Once a Pylon tab is active, the panel will update automatically.",
       });
       reportVisualState("not-pylon", null, null);
+      break;
+    case "reverse":
+      clearFrame();
+      showStatusView({
+        eyebrow: `Pylon issue #${desiredState.issueNumber}`,
+        title: "Linked Pylon thread",
+        body: "This Ona conversation is linked to a Pylon issue. Open the thread in Pylon to read or reply.",
+        meta: desiredState.targetUrl
+          ? null
+          : "The extension hasn't seen the Pylon thread URL yet. Open the Pylon issue once and it'll remember.",
+        actionLabel: desiredState.targetUrl ? "Open Pylon thread" : null,
+      });
+      reportVisualState("reverse", desiredState.issueNumber, null);
       break;
     case "no-issue":
       clearFrame();
@@ -362,6 +387,13 @@ frame.addEventListener("error", (event) => {
 });
 
 primaryAction.addEventListener("click", () => {
+  const desiredState = getDesiredState();
+
+  if (desiredState.visualState === "reverse" && desiredState.targetUrl) {
+    window.open(desiredState.targetUrl, "_blank");
+    return;
+  }
+
   const issueNumber = snapshot?.activeIssueNumber;
   if (!issueNumber) return;
 

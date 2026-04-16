@@ -1,6 +1,7 @@
 const GITPOD_ORIGIN = "https://app.gitpod.io";
 const DEFAULT_REPO_URL = "https://github.com/gitpod-io/gitpod-next";
 const CONVERSATION_STORAGE_KEY = "issueConversationUrls";
+const PYLON_URL_STORAGE_KEY = "issuePylonUrls";
 const PANEL_PORT_NAME = "sidepanel";
 const EXTENSION_ORIGIN = chrome.runtime.getURL("");
 const PENDING_CONVERSATION_CAPTURE_MS = 2 * 60 * 1000;
@@ -27,6 +28,16 @@ const panelRuntime = {
 };
 
 let conversationCache = null;
+let pylonUrlCache = null;
+
+function isGitpodDetailsUrl(urlString) {
+  try {
+    const url = new URL(urlString);
+    return url.origin === GITPOD_ORIGIN && url.pathname.startsWith("/details/");
+  } catch {
+    return false;
+  }
+}
 
 function isPylonAppUrl(urlString) {
   try {
@@ -179,6 +190,40 @@ async function clearConversationForIssue(issueNumber) {
   await chrome.storage.local.set({ [CONVERSATION_STORAGE_KEY]: conversations });
 }
 
+async function getPylonUrlCache() {
+  if (pylonUrlCache) return pylonUrlCache;
+
+  const result = await chrome.storage.local.get(PYLON_URL_STORAGE_KEY);
+  pylonUrlCache = result[PYLON_URL_STORAGE_KEY] || {};
+  return pylonUrlCache;
+}
+
+async function setPylonUrlForIssue(issueNumber, pylonUrl) {
+  if (!issueNumber || !pylonUrl) return;
+
+  const urls = { ...(await getPylonUrlCache()) };
+  if (urls[issueNumber] === pylonUrl) return;
+
+  urls[issueNumber] = pylonUrl;
+  pylonUrlCache = urls;
+  await chrome.storage.local.set({ [PYLON_URL_STORAGE_KEY]: urls });
+}
+
+async function findIssueForGitpodUrl(gitpodUrl) {
+  if (!isGitpodDetailsUrl(gitpodUrl)) return null;
+
+  const conversations = await getConversationCache();
+  const normalizedTarget = normalizeUrl(gitpodUrl);
+
+  for (const [issueNumber, savedUrl] of Object.entries(conversations)) {
+    if (normalizeUrl(savedUrl) === normalizedTarget) {
+      return issueNumber;
+    }
+  }
+
+  return null;
+}
+
 function setPylonContextForTab(tabId, context) {
   if (!tabId || !context) return;
 
@@ -190,6 +235,10 @@ function setPylonContextForTab(tabId, context) {
     updatedAt: Date.now(),
   });
   panelRuntime.lastPylonContextUpdateAt = Date.now();
+
+  if (context.issueNumber && context.url) {
+    void setPylonUrlForIssue(context.issueNumber, context.url);
+  }
 }
 
 async function getActiveTab() {
@@ -294,6 +343,16 @@ async function buildSnapshot() {
   const activeIssueNumber = activeContext?.issueNumber || null;
   const activeTabUrl = activeTab?.url ?? null;
 
+  let reverseIssueNumber = null;
+  let reversePylonUrl = null;
+  if (!isPylonAppUrl(activeTabUrl || "") && isGitpodDetailsUrl(activeTabUrl || "")) {
+    reverseIssueNumber = await findIssueForGitpodUrl(activeTabUrl);
+    if (reverseIssueNumber) {
+      const pylonUrls = await getPylonUrlCache();
+      reversePylonUrl = pylonUrls[reverseIssueNumber] || null;
+    }
+  }
+
   return {
     repoUrl: DEFAULT_REPO_URL,
     activeTabId: activeTab?.id ?? null,
@@ -302,6 +361,8 @@ async function buildSnapshot() {
     activePylonUrl: activeContext?.url ?? null,
     activeIssueNumber,
     savedConversationUrl: activeIssueNumber ? conversations[activeIssueNumber] || null : null,
+    reverseIssueNumber,
+    reversePylonUrl,
     currentIframeUrl: panelRuntime.currentIframeUrl,
     expectedFrameUrl: panelRuntime.expectedFrameUrl,
     pendingConversationCapture: getActivePendingConversationCapture(),
@@ -559,10 +620,19 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName !== "local" || !changes[CONVERSATION_STORAGE_KEY]) return;
+  if (areaName !== "local") return;
 
-  conversationCache = changes[CONVERSATION_STORAGE_KEY].newValue || {};
-  void broadcastSnapshot();
+  let shouldBroadcast = false;
+  if (changes[CONVERSATION_STORAGE_KEY]) {
+    conversationCache = changes[CONVERSATION_STORAGE_KEY].newValue || {};
+    shouldBroadcast = true;
+  }
+  if (changes[PYLON_URL_STORAGE_KEY]) {
+    pylonUrlCache = changes[PYLON_URL_STORAGE_KEY].newValue || {};
+    shouldBroadcast = true;
+  }
+
+  if (shouldBroadcast) void broadcastSnapshot();
 });
 
 chrome.webRequest.onCompleted.addListener(
