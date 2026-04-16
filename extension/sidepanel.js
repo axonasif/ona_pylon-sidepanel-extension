@@ -5,11 +5,12 @@ const allowExtensionDebugFallback = searchParams.get("dev") === "1";
 
 const port = chrome.runtime.connect({ name: "sidepanel" });
 
+const panelRoot = document.getElementById("panel-root");
 const frame = document.getElementById("gitpod-frame");
 const frameShell = document.getElementById("frame-shell");
+const frameControls = document.getElementById("frame-controls");
 const loading = document.getElementById("loading");
 const loadingText = document.getElementById("loading-text");
-const toolbarSubtitle = document.getElementById("toolbar-subtitle");
 const statusView = document.getElementById("status-view");
 const statusEyebrow = document.getElementById("status-eyebrow");
 const statusTitle = document.getElementById("status-title");
@@ -19,6 +20,7 @@ const primaryAction = document.getElementById("primary-action");
 const debugJson = document.getElementById("debug-json");
 const reloadButton = document.getElementById("btn-reload");
 const openButton = document.getElementById("btn-open");
+const debugButton = document.getElementById("btn-debug");
 
 let snapshot = null;
 let loadingTimer = null;
@@ -47,11 +49,12 @@ function normalizeUrl(urlString) {
 function startLoading(message) {
   loading.classList.remove("hidden");
   loadingText.textContent = message;
+  hideFrameControls();
 
   window.clearTimeout(loadingTimer);
   loadingTimer = window.setTimeout(() => {
     if (!loading.classList.contains("hidden")) {
-      loadingText.textContent = "Still loading Ona… open Debug below if you need the current panel state.";
+      loadingText.textContent = "Still loading Ona…";
     }
   }, 10000);
 }
@@ -59,6 +62,20 @@ function startLoading(message) {
 function stopLoading() {
   loading.classList.add("hidden");
   window.clearTimeout(loadingTimer);
+}
+
+function showFrameControls() {
+  frameControls.classList.add("visible");
+}
+
+function hideFrameControls() {
+  frameControls.classList.remove("visible");
+  debugJson.classList.add("hidden");
+  debugButton.classList.remove("is-active");
+}
+
+function isGitpodUrl(url) {
+  return typeof url === "string" && url.startsWith(GITPOD_ORIGIN);
 }
 
 function showStatusView({ tone = "default", eyebrow, title, body, meta, actionLabel }) {
@@ -94,6 +111,7 @@ function clearFrame() {
 
   localState.currentFrameSrc = null;
   stopLoading();
+  hideFrameControls();
 }
 
 function getDesiredState() {
@@ -225,19 +243,6 @@ function getOpenTargetUrl(desiredState) {
   return GITPOD_ORIGIN;
 }
 
-function syncToolbar(desiredState) {
-  if (desiredState.issueNumber) {
-    toolbarSubtitle.textContent = `Issue #${desiredState.issueNumber}`;
-  } else if (desiredState.visualState === "not-pylon") {
-    toolbarSubtitle.textContent = "Open a Pylon tab to use Ona";
-  } else {
-    toolbarSubtitle.textContent = "Pick a Pylon issue to begin";
-  }
-
-  reloadButton.disabled = desiredState.visualState !== "loading";
-  openButton.disabled = false;
-}
-
 function render() {
   const desiredState = getDesiredState();
 
@@ -252,7 +257,7 @@ function render() {
     localState.lastActiveIssueNumber = desiredState.issueNumber;
   }
 
-  syncToolbar(desiredState);
+  panelRoot.classList.toggle("immersive", desiredState.visualState === "loading");
 
   switch (desiredState.visualState) {
     case "not-pylon":
@@ -343,11 +348,16 @@ function render() {
 frame.addEventListener("load", () => {
   localState.currentFrameSrc = frame.src;
   stopLoading();
+  if (isGitpodUrl(frame.src)) {
+    showFrameControls();
+  } else {
+    hideFrameControls();
+  }
   renderDebug(getDesiredState());
 });
 
 frame.addEventListener("error", (event) => {
-  loadingText.textContent = "Failed to load Ona in the side panel. Check the Debug section for the current panel state.";
+  loadingText.textContent = "Failed to load Ona in the side panel.";
   console.error("iframe error:", event);
 });
 
@@ -370,6 +380,11 @@ reloadButton.addEventListener("click", () => {
 openButton.addEventListener("click", () => {
   const desiredState = getDesiredState();
   window.open(getOpenTargetUrl(desiredState), "_blank");
+});
+
+debugButton.addEventListener("click", () => {
+  const hidden = debugJson.classList.toggle("hidden");
+  debugButton.classList.toggle("is-active", !hidden);
 });
 
 port.onMessage.addListener((message) => {

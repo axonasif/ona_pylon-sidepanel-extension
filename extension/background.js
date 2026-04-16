@@ -436,13 +436,18 @@ async function handlePortMessage(port, message) {
 }
 
 async function handleStaleEnvironmentRequest(details) {
-  if (details.statusCode !== 404 || !details.documentId) return;
+  if (details.statusCode !== 404) return;
+  if (details.frameType && details.frameType !== "sub_frame") return;
 
-  const session = gitpodDocuments.get(details.documentId);
-  if (!session?.isPanelFrame) return;
-
-  const issueNumber = session.issueNumber || panelRuntime.issueNumber;
+  const issueNumber = panelRuntime.issueNumber;
   if (!issueNumber) return;
+
+  const expectedUrl = panelRuntime.expectedFrameUrl;
+  if (!expectedUrl || !expectedUrl.startsWith(`${GITPOD_ORIGIN}/details/`)) return;
+
+  const conversations = await getConversationCache();
+  const savedUrl = conversations[issueNumber];
+  if (!savedUrl || normalizeUrl(savedUrl) !== normalizeUrl(expectedUrl)) return;
 
   await clearConversationForIssue(issueNumber);
 
@@ -452,7 +457,7 @@ async function handleStaleEnvironmentRequest(details) {
     issueNumber,
     url: details.url,
     statusCode: details.statusCode,
-    documentId: details.documentId,
+    documentId: details.documentId || null,
     timestamp: Date.now(),
   };
 
