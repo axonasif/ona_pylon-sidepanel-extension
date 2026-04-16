@@ -4,7 +4,8 @@ const DEFAULT_REPO_URL = "https://github.com/gitpod-io/gitpod-next";
 const searchParams = new URLSearchParams(window.location.search);
 const allowExtensionDebugFallback = searchParams.get("dev") === "1";
 
-const port = chrome.runtime.connect({ name: "sidepanel" });
+let port = null;
+let reconnectTimer = null;
 
 const panelRoot = document.getElementById("panel-root");
 const frame = document.getElementById("gitpod-frame");
@@ -186,12 +187,13 @@ function reportVisualState(visualState, issueNumber, currentIframeUrl) {
   if (signature === localState.lastReportedVisualSignature) return;
   localState.lastReportedVisualSignature = signature;
 
-  port.postMessage({
+  const delivered = postToPort({
     type: "PANEL_VISUAL_STATE",
     visualState,
     issueNumber,
     currentIframeUrl,
   });
+  if (!delivered) localState.lastReportedVisualSignature = null;
 }
 
 function reportFrameTarget({ visualState, issueNumber, url, reason }) {
@@ -205,13 +207,14 @@ function reportFrameTarget({ visualState, issueNumber, url, reason }) {
   if (signature === localState.lastReportedFrameSignature) return;
   localState.lastReportedFrameSignature = signature;
 
-  port.postMessage({
+  const delivered = postToPort({
     type: "PANEL_FRAME_TARGET",
     visualState,
     issueNumber,
     url,
     reason,
   });
+  if (!delivered) localState.lastReportedFrameSignature = null;
 }
 
 function renderDebug(desiredState) {
@@ -287,7 +290,7 @@ function render() {
       showStatusView({
         eyebrow: `Pylon issue #${desiredState.issueNumber}`,
         title: "Linked Pylon thread",
-        body: "This Ona conversation is linked to a Pylon issue. Open the thread in Pylon to read or reply.",
+        body: "This Ona conversation is linked to a Pylon issue. Pylon's app actively breaks when embedded, so we fall back to a link.",
         meta: desiredState.targetUrl
           ? null
           : "The extension hasn't seen the Pylon thread URL yet. Open the Pylon issue once and it'll remember.",
@@ -419,19 +422,57 @@ debugButton.addEventListener("click", () => {
   debugButton.classList.toggle("is-active", !hidden);
 });
 
-port.onMessage.addListener((message) => {
-  if (message?.type !== "SNAPSHOT") return;
-
-  snapshot = message.snapshot;
-  if (snapshot?.savedConversationUrl) {
-    localState.pendingCreateIssue = null;
+function postToPort(message) {
+  if (!port) return false;
+  try {
+    port.postMessage(message);
+    return true;
+  } catch {
+    handleDisconnect();
+    return false;
   }
-  render();
-});
+}
 
-port.postMessage({
-  type: "PANEL_OPTIONS",
-  allowExtensionDebugFallback,
-});
-port.postMessage({ type: "REQUEST_SNAPSHOT" });
+function handleDisconnect() {
+  if (port) {
+    try {
+      port.disconnect();
+    } catch {}
+  }
+  port = null;
+  localState.lastReportedVisualSignature = null;
+  localState.lastReportedFrameSignature = null;
+
+  if (reconnectTimer) return;
+  reconnectTimer = window.setTimeout(() => {
+    reconnectTimer = null;
+    connectToBackground();
+  }, 250);
+}
+
+function connectToBackground() {
+  port = chrome.runtime.connect({ name: "sidepanel" });
+
+  port.onMessage.addListener((message) => {
+    if (message?.type !== "SNAPSHOT") return;
+
+    snapshot = message.snapshot;
+    if (snapshot?.savedConversationUrl) {
+      localState.pendingCreateIssue = null;
+    }
+    render();
+  });
+
+  port.onDisconnect.addListener(() => {
+    handleDisconnect();
+  });
+
+  postToPort({
+    type: "PANEL_OPTIONS",
+    allowExtensionDebugFallback,
+  });
+  postToPort({ type: "REQUEST_SNAPSHOT" });
+}
+
+connectToBackground();
 render();
