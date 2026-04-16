@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Gitpod Side Panel for Pylon",
+  "name": "Ona for Pylon",
   "version": "1.0.0",
-  "description": "Opens Gitpod in a Chrome side panel when browsing Pylon issues.",
+  "description": "Opens Ona in a side panel when browsing Pylon issues, and surfaces the linked Pylon thread when you're back on Ona.",
   "permissions": [
     "sidePanel",
     "activeTab",
@@ -51,6 +51,6 @@
     "128": "icons/icon128.png"
   },
   "action": {
-    "default_title": "Open Gitpod Side Panel"
+    "default_title": "Open Ona for Pylon"
   }
 }

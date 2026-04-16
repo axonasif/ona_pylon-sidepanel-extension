@@ -129,6 +129,12 @@ function getDesiredState() {
         targetUrl: snapshot.reversePylonUrl || null,
       };
     }
+    const isGitpodTab =
+      typeof snapshot.activeTabUrl === "string" &&
+      snapshot.activeTabUrl.startsWith(GITPOD_ORIGIN);
+    if (isGitpodTab) {
+      return { visualState: "gitpod-unlinked", issueNumber: null, targetUrl: null };
+    }
     return { visualState: "not-pylon", issueNumber: null, targetUrl: null };
   }
 
@@ -284,6 +290,15 @@ function render() {
         meta: "Once a Pylon tab is active, the panel will update automatically.",
       });
       reportVisualState("not-pylon", null, null);
+      break;
+    case "gitpod-unlinked":
+      clearFrame();
+      showStatusView({
+        eyebrow: "Ona on Gitpod",
+        title: "No linked Pylon issue",
+        body: "This Gitpod page isn't tied to a Pylon thread the extension has seen. Open the related Pylon issue in another tab and the panel will link them automatically.",
+      });
+      reportVisualState("gitpod-unlinked", null, null);
       break;
     case "reverse":
       clearFrame();

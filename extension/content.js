@@ -3,6 +3,15 @@
 
 (function () {
   const BUTTON_ID = "gitpod-sidepanel-trigger";
+  const HIDDEN_CLASS = "ona-trigger-hidden";
+
+  let triggerHidden = false;
+
+  function applyTriggerVisibility() {
+    const btn = document.getElementById(BUTTON_ID);
+    if (!btn) return;
+    btn.classList.toggle(HIDDEN_CLASS, triggerHidden);
+  }
 
   function getIssueNumber() {
     const issueNumber = new URLSearchParams(window.location.search).get("issueNumber");
@@ -28,10 +37,10 @@
 
     const button = document.createElement("button");
     button.id = BUTTON_ID;
-    button.title = "Open Gitpod Side Panel";
+    button.title = "Open Ona for Pylon";
     button.innerHTML = `
-      <svg width="24" height="24" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M10 20V12L16 8L22 12V20L16 24L10 20Z" fill="#fff"/>
+      <svg viewBox="0 0 192 192" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path d="M185.417 56.2286C189.257 60.0686 191.726 65.28 191.726 71.3143V120.96C191.726 126.994 189.257 132.206 185.417 136.046L135.771 185.691C131.931 189.806 126.446 192 120.686 192H71.04C65.0057 192 59.7943 189.806 55.68 185.691L6.03428 136.046C2.19428 132.206 0 126.994 0 120.96V71.3143C0 65.28 2.19428 60.0686 6.03428 55.9543L55.68 6.30857C59.7943 2.46857 65.0057 0 71.04 0H120.686C126.446 0 131.931 2.46858 135.771 6.58286L185.417 56.2286ZM146.251 125.131V67.1431C146.251 55.3488 136.651 45.4745 124.857 45.4745H66.8688C54.8002 45.4745 45.2002 55.3488 45.2002 67.1431V125.131C45.2002 136.925 54.8002 146.525 66.8688 146.525H124.857C136.651 146.525 146.251 136.925 146.251 125.131Z" fill="currentColor"/>
       </svg>
     `;
 
@@ -40,6 +49,7 @@
     });
 
     document.body.appendChild(button);
+    applyTriggerVisibility();
   }
 
   function installLocationListeners() {
@@ -74,10 +84,29 @@
         type: "PYLON_CONTEXT",
         context: getContext(),
       });
+      return;
+    }
+    if (message?.type === "TRIGGER_VISIBILITY") {
+      triggerHidden = !message.visible;
+      applyTriggerVisibility();
     }
   });
+
+  function requestInitialVisibility() {
+    try {
+      chrome.runtime.sendMessage({ type: "REQUEST_TRIGGER_VISIBILITY" }, (response) => {
+        if (chrome.runtime.lastError) return;
+        if (response?.type !== "TRIGGER_VISIBILITY") return;
+        triggerHidden = !response.visible;
+        applyTriggerVisibility();
+      });
+    } catch {
+      // Background worker may be asleep; it will notify us on wake.
+    }
+  }
 
   ensureButton();
   installLocationListeners();
   reportContext();
+  requestInitialVisibility();
 })();

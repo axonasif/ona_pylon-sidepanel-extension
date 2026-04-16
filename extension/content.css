@@ -3,24 +3,62 @@
   bottom: 24px;
   right: 24px;
   z-index: 2147483647;
-  width: 48px;
-  height: 48px;
+  width: 52px;
+  height: 52px;
   border-radius: 50%;
   border: none;
-  background: #FFB45B;
+  padding: 0;
+  background: radial-gradient(circle at 30% 25%, #262a33 0%, #17191f 72%);
+  color: #f6f7fb;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  box-shadow:
+    0 6px 18px rgba(0, 0, 0, 0.36),
+    0 0 0 1px rgba(255, 255, 255, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition: transform 0.2s ease, box-shadow 0.22s ease;
 }
 
 #gitpod-sidepanel-trigger:hover {
-  transform: scale(1.1);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  transform: translateY(-1px);
+  box-shadow:
+    0 10px 26px rgba(0, 0, 0, 0.44),
+    0 0 0 1px rgba(255, 255, 255, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 #gitpod-sidepanel-trigger:active {
-  transform: scale(0.95);
+  transform: scale(0.96);
+}
+
+#gitpod-sidepanel-trigger.ona-trigger-hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px) scale(0.94);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
+}
+
+#gitpod-sidepanel-trigger svg {
+  width: 26px;
+  height: 26px;
+  display: block;
+  transform-origin: 50% 50%;
+}
+
+#gitpod-sidepanel-trigger:hover svg {
+  animation: ona-trigger-tick 3.6s cubic-bezier(0.6, 0, 0.2, 1) infinite;
+}
+
+@keyframes ona-trigger-tick {
+  0%   { transform: rotate(0deg); }
+  15%  { transform: rotate(90deg); }
+  25%  { transform: rotate(90deg); }
+  40%  { transform: rotate(180deg); }
+  50%  { transform: rotate(180deg); }
+  65%  { transform: rotate(270deg); }
+  75%  { transform: rotate(270deg); }
+  90%  { transform: rotate(360deg); }
+  100% { transform: rotate(360deg); }
 }

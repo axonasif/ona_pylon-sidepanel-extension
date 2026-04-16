@@ -535,12 +535,42 @@ chrome.action.onClicked.addListener(async (tab) => {
   await broadcastSnapshot();
 });
 
+async function broadcastTriggerVisibility(visible) {
+  let tabs = [];
+  try {
+    tabs = await chrome.tabs.query({ url: "https://app.usepylon.com/*" });
+  } catch {
+    return;
+  }
+  await Promise.all(
+    tabs.map(async (tab) => {
+      if (!tab.id) return;
+      try {
+        await chrome.tabs.sendMessage(tab.id, {
+          type: "TRIGGER_VISIBILITY",
+          visible,
+        });
+      } catch {
+        // Tab may not have the content script injected yet.
+      }
+    }),
+  );
+}
+
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== PANEL_PORT_NAME) return;
 
+  const wasEmpty = panelPorts.size === 0;
   panelPorts.add(port);
+  if (wasEmpty) {
+    void broadcastTriggerVisibility(false);
+  }
+
   port.onDisconnect.addListener(() => {
     panelPorts.delete(port);
+    if (panelPorts.size === 0) {
+      void broadcastTriggerVisibility(true);
+    }
   });
   port.onMessage.addListener((message) => {
     void handlePortMessage(port, message);
@@ -566,6 +596,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case "GITPOD_LOCATION":
         await handleGitpodLocationMessage(message, sender);
         return { ok: true };
+      case "REQUEST_TRIGGER_VISIBILITY":
+        return { type: "TRIGGER_VISIBILITY", visible: panelPorts.size === 0 };
       default:
         return { ok: false };
     }
