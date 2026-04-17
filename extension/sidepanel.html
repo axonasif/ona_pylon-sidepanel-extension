@@ -285,6 +285,23 @@
       z-index: 3;
     }
 
+    .floating-notice {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      padding: 10px 12px;
+      background: rgba(255, 138, 138, 0.14);
+      border: 1px solid rgba(255, 138, 138, 0.3);
+      border-radius: 12px;
+      color: #ffd7d7;
+      font-size: 12px;
+      line-height: 1.45;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+      z-index: 4;
+    }
+
     @keyframes spin {
       to {
         transform: rotate(360deg);
@@ -307,6 +324,7 @@
         <div class="spinner"></div>
         <div class="loading-text" id="loading-text">Loading Ona…</div>
       </div>
+      <div class="floating-notice hidden" id="floating-notice"></div>
       <iframe
         id="gitpod-frame"
         name="ona-side-panel-frame"

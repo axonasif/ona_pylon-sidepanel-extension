@@ -2,6 +2,7 @@
 // persist and debug the currently active conversation.
 
 (function () {
+  const EXTENSION_ORIGIN = new URL(chrome.runtime.getURL("")).origin;
   const IS_PANEL_FRAME =
     window.parent !== window &&
     (window.name === "ona-side-panel-frame" ||
@@ -93,6 +94,7 @@
 
   window.addEventListener("message", (event) => {
     if (event.source !== window.parent) return;
+    if (event.origin !== EXTENSION_ORIGIN) return;
     const data = event.data;
     if (!data || data.type !== "ONA_DELETE_ENVIRONMENT") return;
     const requestId = data.requestId;

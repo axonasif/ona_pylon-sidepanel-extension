@@ -131,7 +131,19 @@ function beginPendingConversationCapture(issueNumber, createUrl) {
     issueNumber,
     createUrl,
     startedAt: Date.now(),
+    gitpodTabId: null,
   };
+}
+
+function maybeMarkPendingCaptureGitpodTab(tabId, urlString) {
+  const pendingCapture = getActivePendingConversationCapture();
+  if (!pendingCapture || !tabId) return false;
+  if (normalizeUrl(urlString) !== normalizeUrl(pendingCapture.createUrl)) return false;
+
+  if (pendingCapture.gitpodTabId && pendingCapture.gitpodTabId !== tabId) return false;
+  if (pendingCapture.gitpodTabId === tabId) return false;
+  pendingCapture.gitpodTabId = tabId;
+  return true;
 }
 
 function noteGitpodObservation(urlString, source) {
@@ -140,10 +152,11 @@ function noteGitpodObservation(urlString, source) {
   panelRuntime.lastGitpodLocationUpdateAt = Date.now();
 }
 
-async function maybePersistPendingConversationUrl(urlString, source) {
+async function maybePersistPendingConversationUrl(urlString, source, tabId = null) {
   const pendingCapture = getActivePendingConversationCapture();
   if (!pendingCapture) return false;
   if (!shouldPersistConversationUrl(urlString)) return false;
+  if (tabId && pendingCapture.gitpodTabId !== tabId) return false;
 
   noteGitpodObservation(urlString, source);
   await setConversationForIssue(pendingCapture.issueNumber, urlString);
@@ -410,15 +423,28 @@ async function handleGitpodLocationMessage(message, sender) {
 
   const existingSession = sender.documentId ? gitpodDocuments.get(sender.documentId) : null;
   const pendingCapture = getActivePendingConversationCapture();
+  const senderTabId = sender.tab?.id || null;
   const normalizedMessageUrl = normalizeUrl(message.url);
   const normalizedReferrer = normalizeUrl(message.referrer || "");
   const normalizedExpectedFrameUrl = normalizeUrl(panelRuntime.expectedFrameUrl);
+  const normalizedPendingCreateUrl = normalizeUrl(pendingCapture?.createUrl || null);
   const matchesExpectedFrameUrl =
     Boolean(normalizedExpectedFrameUrl) &&
     (normalizedMessageUrl === normalizedExpectedFrameUrl ||
       normalizedReferrer === normalizedExpectedFrameUrl);
+  const markedPendingTab =
+    senderTabId && pendingCapture
+      ? maybeMarkPendingCaptureGitpodTab(senderTabId, message.url)
+      : false;
+  const matchesPendingTab =
+    Boolean(pendingCapture?.gitpodTabId) &&
+    senderTabId === pendingCapture.gitpodTabId;
   const pendingCaptureMatches =
-    Boolean(pendingCapture) && shouldPersistConversationUrl(message.url);
+    Boolean(pendingCapture) &&
+    shouldPersistConversationUrl(message.url) &&
+    (message.isPanelFrame ||
+      (!senderTabId && normalizedReferrer === normalizedPendingCreateUrl) ||
+      matchesPendingTab);
   const isPanelFrame = Boolean(
     message.isPanelFrame || existingSession?.isPanelFrame || matchesExpectedFrameUrl || pendingCaptureMatches,
   );
@@ -443,9 +469,16 @@ async function handleGitpodLocationMessage(message, sender) {
 
   noteGitpodObservation(message.url, isPanelFrame ? "panel-frame" : "gitpod-message");
 
+  if (markedPendingTab) {
+    await broadcastSnapshot();
+  }
+
   if (!isPanelFrame) return;
 
   panelRuntime.currentIframeUrl = message.url;
+  if (sender.documentId && sender.documentId !== panelRuntime.gitpodDocumentId) {
+    panelRuntime.gitpodPrincipal = null;
+  }
   panelRuntime.gitpodDocumentId = sender.documentId || panelRuntime.gitpodDocumentId;
 
   if (issueNumber && shouldPersistConversationUrl(message.url)) {
@@ -466,6 +499,35 @@ async function handleEnvironmentDeletedFromPanel(message) {
   panelRuntime.pendingConversationCapture = null;
   panelRuntime.currentIframeUrl = null;
   await broadcastSnapshot();
+}
+
+async function ensureOnaAiTagForActiveIssue() {
+  const activeTab = await getPanelSourceTab();
+  if (!activeTab?.id || !isPylonAppUrl(activeTab.url || "")) {
+    return { ok: false, error: "active-tab-not-pylon" };
+  }
+
+  const context = await refreshTabContext(activeTab.id, activeTab.url);
+  if (!context?.issueNumber) {
+    return { ok: false, error: "active-pylon-page-has-no-issue" };
+  }
+
+  try {
+    const response = await chrome.tabs.sendMessage(activeTab.id, {
+      type: "ENSURE_ONA_AI_TAG",
+      issueNumber: context.issueNumber,
+    });
+    if (response?.ok) {
+      return {
+        ok: true,
+        issueNumber: context.issueNumber,
+        ...(response.result || {}),
+      };
+    }
+    return { ok: false, error: response?.error || "ensure-ona-ai-tag-failed" };
+  } catch (error) {
+    return { ok: false, error: error?.message || String(error) };
+  }
 }
 
 async function handlePortMessage(port, message) {
@@ -507,6 +569,7 @@ async function handlePortMessage(port, message) {
 async function handleStaleEnvironmentRequest(details) {
   if (details.statusCode !== 404) return;
   if (details.frameType && details.frameType !== "sub_frame") return;
+  if (!details.documentId || details.documentId !== panelRuntime.gitpodDocumentId) return;
 
   const issueNumber = panelRuntime.issueNumber;
   if (!issueNumber) return;
@@ -574,6 +637,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case "GITPOD_LOCATION":
         await handleGitpodLocationMessage(message, sender);
         return { ok: true };
+      case "ENSURE_ONA_AI_TAG_FOR_ACTIVE_ISSUE":
+        return await ensureOnaAiTagForActiveIssue();
       default:
         return { ok: false };
     }
@@ -593,9 +658,13 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
 
   if ((changeInfo.url || changeInfo.status === "complete") && tab.url?.startsWith(GITPOD_ORIGIN)) {
-    void maybePersistPendingConversationUrl(tab.url, "gitpod-tab").then((didPersist) => {
-      if (didPersist) {
+    const didMarkPendingTab = maybeMarkPendingCaptureGitpodTab(tabId, tab.url);
+    void maybePersistPendingConversationUrl(tab.url, "gitpod-tab", tabId).then((didPersist) => {
+      if (didMarkPendingTab || didPersist) {
         void broadcastSnapshot();
+      }
+      if (didPersist) {
+        return;
       }
     });
   }
@@ -655,6 +724,9 @@ chrome.webRequest.onCompleted.addListener(
 
 chrome.webRequest.onBeforeSendHeaders.addListener(
   (details) => {
+    if (!panelRuntime.gitpodDocumentId || details.documentId !== panelRuntime.gitpodDocumentId) {
+      return;
+    }
     const headers = details.requestHeaders;
     if (!headers) return;
     for (const header of headers) {

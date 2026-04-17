@@ -3,6 +3,11 @@
 
 (function () {
   const BUTTON_ID = "gitpod-sidepanel-trigger";
+  const PAGE_BRIDGE_REQUEST_EVENT = "ona-pylon-extension:page-request";
+  const PAGE_BRIDGE_EVENT = "ona-pylon-extension:page-result";
+  const PAGE_BRIDGE_SCRIPT_ID = "ona-pylon-page-bridge";
+  const pendingPageRequests = new Map();
+  let pageBridgePromise = null;
 
   function getIssueNumber() {
     const issueNumber = new URLSearchParams(window.location.search).get("issueNumber");
@@ -88,15 +93,103 @@
     window.addEventListener("popstate", notify);
   }
 
+  function handlePageBridgeMessage(event) {
+    if (event.source !== window) return;
+    const data = event.data;
+    if (!data || data.type !== PAGE_BRIDGE_EVENT || !data.requestId) return;
+
+    const resolver = pendingPageRequests.get(data.requestId);
+    if (!resolver) return;
+
+    pendingPageRequests.delete(data.requestId);
+    window.clearTimeout(resolver.timer);
+    if (data.ok) {
+      resolver.resolve(data.result || { ok: true });
+    } else {
+      resolver.reject(new Error(data.error || "unknown-page-bridge-error"));
+    }
+  }
+
+  function ensurePageBridge() {
+    if (pageBridgePromise) return pageBridgePromise;
+
+    pageBridgePromise = new Promise((resolve, reject) => {
+      if (document.getElementById(PAGE_BRIDGE_SCRIPT_ID)) {
+        resolve();
+        return;
+      }
+
+      const script = document.createElement("script");
+      script.id = PAGE_BRIDGE_SCRIPT_ID;
+      script.src = chrome.runtime.getURL("pylon-page-bridge.js");
+      script.addEventListener("load", () => resolve(), { once: true });
+      script.addEventListener(
+        "error",
+        () => {
+          pageBridgePromise = null;
+          reject(new Error("page-bridge-load-error"));
+        },
+        { once: true },
+      );
+      (document.head || document.documentElement || document.body).appendChild(script);
+    });
+
+    return pageBridgePromise;
+  }
+
+  function runInPage(action, payload) {
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    return new Promise((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        if (!pendingPageRequests.has(requestId)) return;
+        pendingPageRequests.delete(requestId);
+        reject(new Error("page-bridge-timeout"));
+      }, 15000);
+      pendingPageRequests.set(requestId, { resolve, reject, timer });
+
+      ensurePageBridge()
+        .then(() => {
+          window.postMessage(
+            {
+              type: PAGE_BRIDGE_REQUEST_EVENT,
+              requestId,
+              action,
+              payload: payload || {},
+            },
+            "*",
+          );
+        })
+        .catch((error) => {
+          const pendingRequest = pendingPageRequests.get(requestId);
+          if (!pendingRequest) return;
+          pendingPageRequests.delete(requestId);
+          window.clearTimeout(pendingRequest.timer);
+          reject(error);
+        });
+    });
+  }
+
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message?.type === "REQUEST_PYLON_CONTEXT") {
       sendResponse({
         type: "PYLON_CONTEXT",
         context: getContext(),
       });
+      return;
+    }
+
+    if (message?.type === "ENSURE_ONA_AI_TAG") {
+      runInPage("ENSURE_ONA_AI_TAG", {
+        issueNumber: message.issueNumber || getIssueNumber(),
+      })
+        .then((result) => sendResponse({ ok: true, result }))
+        .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+      return true;
     }
   });
 
+  window.addEventListener("message", handlePageBridgeMessage);
   installButtonWatchdog();
   installLocationListeners();
   reportContext();

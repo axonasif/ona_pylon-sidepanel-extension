@@ -20,6 +20,7 @@ const statusBody = document.getElementById("status-body");
 const statusMeta = document.getElementById("status-meta");
 const primaryAction = document.getElementById("primary-action");
 const debugJson = document.getElementById("debug-json");
+const floatingNotice = document.getElementById("floating-notice");
 const reloadButton = document.getElementById("btn-reload");
 const openButton = document.getElementById("btn-open");
 const debugButton = document.getElementById("btn-debug");
@@ -34,6 +35,8 @@ const localState = {
   lastActiveIssueNumber: null,
   lastReportedVisualSignature: null,
   lastReportedFrameSignature: null,
+  tagSyncInFlightForIssue: null,
+  noticeTimer: null,
   deleteArmed: false,
   deleteArmedTimer: null,
   deleteInFlight: false,
@@ -79,6 +82,30 @@ function hideFrameControls() {
   debugJson.classList.add("hidden");
   debugButton.classList.remove("is-active");
   disarmDelete();
+}
+
+function hideNotice() {
+  if (localState.noticeTimer) {
+    window.clearTimeout(localState.noticeTimer);
+    localState.noticeTimer = null;
+  }
+  floatingNotice.classList.add("hidden");
+  floatingNotice.textContent = "";
+}
+
+function showNotice(message, durationMs = 9000) {
+  if (!message) {
+    hideNotice();
+    return;
+  }
+  if (localState.noticeTimer) {
+    window.clearTimeout(localState.noticeTimer);
+  }
+  floatingNotice.textContent = message;
+  floatingNotice.classList.remove("hidden");
+  localState.noticeTimer = window.setTimeout(() => {
+    hideNotice();
+  }, durationMs);
 }
 
 function isGitpodUrl(url) {
@@ -140,9 +167,11 @@ function showStatusView({ tone = "default", eyebrow, title, body, meta, actionLa
   if (actionLabel) {
     primaryAction.classList.remove("hidden");
     primaryAction.textContent = actionLabel;
+    primaryAction.disabled = false;
   } else {
     primaryAction.classList.add("hidden");
     primaryAction.textContent = "";
+    primaryAction.disabled = false;
   }
 }
 
@@ -313,6 +342,7 @@ function render() {
       localState.lastActiveIssueNumber !== desiredState.issueNumber
     ) {
       localState.pendingCreateIssue = null;
+      localState.tagSyncInFlightForIssue = null;
       localState.lastReportedFrameSignature = null;
     }
     localState.lastActiveIssueNumber = desiredState.issueNumber;
@@ -363,7 +393,7 @@ function render() {
       });
       reportVisualState("no-issue", null, null);
       break;
-    case "create":
+    case "create": {
       clearFrame();
       showStatusView({
         eyebrow: `Issue #${desiredState.issueNumber}`,
@@ -374,7 +404,8 @@ function render() {
       });
       reportVisualState("create", desiredState.issueNumber, null);
       break;
-    case "stale-env":
+    }
+    case "stale-env": {
       clearFrame();
       showStatusView({
         tone: "danger",
@@ -386,6 +417,7 @@ function render() {
       });
       reportVisualState("stale-env", desiredState.issueNumber, null);
       break;
+    }
     case "loading": {
       statusView.classList.add("hidden");
       frameShell.classList.remove("hidden");
@@ -447,19 +479,49 @@ frame.addEventListener("error", (event) => {
 });
 
 primaryAction.addEventListener("click", () => {
-  const desiredState = getDesiredState();
+  void (async () => {
+    const desiredState = getDesiredState();
 
-  if (desiredState.visualState === "reverse" && desiredState.targetUrl) {
-    window.open(desiredState.targetUrl, "_blank");
-    return;
-  }
+    if (desiredState.visualState === "reverse" && desiredState.targetUrl) {
+      window.open(desiredState.targetUrl, "_blank");
+      return;
+    }
 
-  const issueNumber = snapshot?.activeIssueNumber;
-  if (!issueNumber) return;
+    const issueNumber = snapshot?.activeIssueNumber;
+    if (!issueNumber) return;
 
-  localState.pendingCreateIssue = issueNumber;
-  localState.lastReportedFrameSignature = null;
-  render();
+    hideNotice();
+    render();
+
+    localState.pendingCreateIssue = issueNumber;
+    localState.lastReportedFrameSignature = null;
+    render();
+
+    if (localState.tagSyncInFlightForIssue === issueNumber) {
+      return;
+    }
+
+    localState.tagSyncInFlightForIssue = issueNumber;
+    chrome.runtime
+      .sendMessage({
+        type: "ENSURE_ONA_AI_TAG_FOR_ACTIVE_ISSUE",
+      })
+      .then((response) => {
+        if (response?.ok) return;
+        throw new Error(response?.error || "ensure-ona-ai-tag-failed");
+      })
+      .catch((error) => {
+        if (snapshot?.activeIssueNumber !== issueNumber) return;
+        showNotice(
+          `Couldn't add the "ona_ai" tag automatically. Please add it manually in Pylon if needed. (${error?.message || error})`,
+        );
+      })
+      .finally(() => {
+        if (localState.tagSyncInFlightForIssue === issueNumber) {
+          localState.tagSyncInFlightForIssue = null;
+        }
+      });
+  })();
 });
 
 reloadButton.addEventListener("click", () => {
@@ -483,6 +545,7 @@ const pendingDeleteRequests = new Map();
 
 window.addEventListener("message", (event) => {
   if (event.source !== frame.contentWindow) return;
+  if (event.origin !== GITPOD_ORIGIN) return;
   const data = event.data;
   if (!data || data.type !== "ONA_DELETE_ENVIRONMENT_RESULT") return;
   const resolver = pendingDeleteRequests.get(data.requestId);

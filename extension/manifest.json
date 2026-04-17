@@ -37,6 +37,12 @@
       "all_frames": true
     }
   ],
+  "web_accessible_resources": [
+    {
+      "resources": ["pylon-page-bridge.js"],
+      "matches": ["https://app.usepylon.com/*"]
+    }
+  ],
   "declarative_net_request": {
     "rule_resources": [
       {
