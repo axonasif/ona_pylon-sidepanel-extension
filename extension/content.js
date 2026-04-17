@@ -3,15 +3,6 @@
 
 (function () {
   const BUTTON_ID = "gitpod-sidepanel-trigger";
-  const HIDDEN_CLASS = "ona-trigger-hidden";
-
-  let triggerHidden = false;
-
-  function applyTriggerVisibility() {
-    const btn = document.getElementById(BUTTON_ID);
-    if (!btn) return;
-    btn.classList.toggle(HIDDEN_CLASS, triggerHidden);
-  }
 
   function getIssueNumber() {
     const issueNumber = new URLSearchParams(window.location.search).get("issueNumber");
@@ -33,6 +24,7 @@
   }
 
   function ensureButton() {
+    if (!document.body) return;
     if (document.getElementById(BUTTON_ID)) return;
 
     const button = document.createElement("button");
@@ -49,7 +41,25 @@
     });
 
     document.body.appendChild(button);
-    applyTriggerVisibility();
+  }
+
+  function installButtonWatchdog() {
+    const run = () => {
+      if (!document.body) return;
+      ensureButton();
+      const observer = new MutationObserver(() => {
+        if (!document.getElementById(BUTTON_ID)) ensureButton();
+      });
+      observer.observe(document.body, { childList: true });
+    };
+
+    if (document.body) {
+      run();
+    } else if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", run, { once: true });
+    } else {
+      window.setTimeout(run, 0);
+    }
   }
 
   function installLocationListeners() {
@@ -84,29 +94,10 @@
         type: "PYLON_CONTEXT",
         context: getContext(),
       });
-      return;
-    }
-    if (message?.type === "TRIGGER_VISIBILITY") {
-      triggerHidden = !message.visible;
-      applyTriggerVisibility();
     }
   });
 
-  function requestInitialVisibility() {
-    try {
-      chrome.runtime.sendMessage({ type: "REQUEST_TRIGGER_VISIBILITY" }, (response) => {
-        if (chrome.runtime.lastError) return;
-        if (response?.type !== "TRIGGER_VISIBILITY") return;
-        triggerHidden = !response.visible;
-        applyTriggerVisibility();
-      });
-    } catch {
-      // Background worker may be asleep; it will notify us on wake.
-    }
-  }
-
-  ensureButton();
+  installButtonWatchdog();
   installLocationListeners();
   reportContext();
-  requestInitialVisibility();
 })();

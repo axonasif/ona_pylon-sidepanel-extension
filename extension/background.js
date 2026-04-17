@@ -25,6 +25,7 @@ const panelRuntime = {
   lastPylonContextUpdateAt: null,
   lastGitpodLocationUpdateAt: null,
   gitpodDocumentId: null,
+  gitpodPrincipal: null,
 };
 
 let conversationCache = null;
@@ -88,33 +89,24 @@ function normalizeUrl(urlString) {
   }
 }
 
-function isGenericGitpodLandingUrl(urlString) {
+function canonicalizeConversationUrl(urlString) {
   try {
     const url = new URL(urlString);
-    return (
-      url.origin === GITPOD_ORIGIN &&
-      url.pathname === "/ai" &&
-      !url.search &&
-      !url.hash
-    );
+    if (url.origin !== GITPOD_ORIGIN) return null;
+    const match = url.pathname.match(/^\/details\/([^/?#]+)\/?$/);
+    if (!match) return null;
+    return `${GITPOD_ORIGIN}/details/${match[1]}`;
   } catch {
-    return true;
+    return null;
   }
 }
 
-function shouldPersistConversationUrl(urlString, issueNumber) {
-  try {
-    const url = new URL(urlString);
-    if (url.origin !== GITPOD_ORIGIN) return false;
-    if (isGenericGitpodLandingUrl(urlString)) return false;
-    if (normalizeUrl(urlString) === normalizeUrl(buildCreateConversationUrl(issueNumber))) {
-      return false;
-    }
+function isValidConversationUrl(urlString) {
+  return canonicalizeConversationUrl(urlString) !== null;
+}
 
-    return true;
-  } catch {
-    return false;
-  }
+function shouldPersistConversationUrl(urlString) {
+  return isValidConversationUrl(urlString);
 }
 
 function getActivePendingConversationCapture() {
@@ -151,7 +143,7 @@ function noteGitpodObservation(urlString, source) {
 async function maybePersistPendingConversationUrl(urlString, source) {
   const pendingCapture = getActivePendingConversationCapture();
   if (!pendingCapture) return false;
-  if (!shouldPersistConversationUrl(urlString, pendingCapture.issueNumber)) return false;
+  if (!shouldPersistConversationUrl(urlString)) return false;
 
   noteGitpodObservation(urlString, source);
   await setConversationForIssue(pendingCapture.issueNumber, urlString);
@@ -169,12 +161,14 @@ async function getConversationCache() {
 }
 
 async function setConversationForIssue(issueNumber, conversationUrl) {
-  if (!issueNumber || !conversationUrl) return;
+  if (!issueNumber) return;
+  const canonical = canonicalizeConversationUrl(conversationUrl);
+  if (!canonical) return;
 
   const conversations = { ...(await getConversationCache()) };
-  if (conversations[issueNumber] === conversationUrl) return;
+  if (conversations[issueNumber] === canonical) return;
 
-  conversations[issueNumber] = conversationUrl;
+  conversations[issueNumber] = canonical;
   conversationCache = conversations;
   await chrome.storage.local.set({ [CONVERSATION_STORAGE_KEY]: conversations });
 }
@@ -374,6 +368,7 @@ async function buildSnapshot() {
     lastPylonContextUpdateAt: panelRuntime.lastPylonContextUpdateAt,
     lastGitpodLocationUpdateAt: panelRuntime.lastGitpodLocationUpdateAt,
     gitpodDocumentId: panelRuntime.gitpodDocumentId,
+    gitpodPrincipal: panelRuntime.gitpodPrincipal,
   };
 }
 
@@ -423,8 +418,7 @@ async function handleGitpodLocationMessage(message, sender) {
     (normalizedMessageUrl === normalizedExpectedFrameUrl ||
       normalizedReferrer === normalizedExpectedFrameUrl);
   const pendingCaptureMatches =
-    Boolean(pendingCapture) &&
-    shouldPersistConversationUrl(message.url, pendingCapture.issueNumber);
+    Boolean(pendingCapture) && shouldPersistConversationUrl(message.url);
   const isPanelFrame = Boolean(
     message.isPanelFrame || existingSession?.isPanelFrame || matchesExpectedFrameUrl || pendingCaptureMatches,
   );
@@ -454,12 +448,23 @@ async function handleGitpodLocationMessage(message, sender) {
   panelRuntime.currentIframeUrl = message.url;
   panelRuntime.gitpodDocumentId = sender.documentId || panelRuntime.gitpodDocumentId;
 
-  if (issueNumber && shouldPersistConversationUrl(message.url, issueNumber)) {
+  if (issueNumber && shouldPersistConversationUrl(message.url)) {
     await setConversationForIssue(issueNumber, message.url);
     panelRuntime.pendingConversationCapture = null;
     panelRuntime.expectedFrameUrl = message.url;
   }
 
+  await broadcastSnapshot();
+}
+
+async function handleEnvironmentDeletedFromPanel(message) {
+  const issueNumber = message.issueNumber || panelRuntime.issueNumber;
+  if (issueNumber) {
+    await clearConversationForIssue(issueNumber);
+  }
+  panelRuntime.expectedFrameUrl = null;
+  panelRuntime.pendingConversationCapture = null;
+  panelRuntime.currentIframeUrl = null;
   await broadcastSnapshot();
 }
 
@@ -490,6 +495,9 @@ async function handlePortMessage(port, message) {
         panelRuntime.pendingConversationCapture = null;
       }
       await broadcastSnapshot();
+      break;
+    case "ENVIRONMENT_DELETED":
+      await handleEnvironmentDeletedFromPanel(message);
       break;
     default:
       break;
@@ -535,42 +543,12 @@ chrome.action.onClicked.addListener(async (tab) => {
   await broadcastSnapshot();
 });
 
-async function broadcastTriggerVisibility(visible) {
-  let tabs = [];
-  try {
-    tabs = await chrome.tabs.query({ url: "https://app.usepylon.com/*" });
-  } catch {
-    return;
-  }
-  await Promise.all(
-    tabs.map(async (tab) => {
-      if (!tab.id) return;
-      try {
-        await chrome.tabs.sendMessage(tab.id, {
-          type: "TRIGGER_VISIBILITY",
-          visible,
-        });
-      } catch {
-        // Tab may not have the content script injected yet.
-      }
-    }),
-  );
-}
-
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== PANEL_PORT_NAME) return;
 
-  const wasEmpty = panelPorts.size === 0;
   panelPorts.add(port);
-  if (wasEmpty) {
-    void broadcastTriggerVisibility(false);
-  }
-
   port.onDisconnect.addListener(() => {
     panelPorts.delete(port);
-    if (panelPorts.size === 0) {
-      void broadcastTriggerVisibility(true);
-    }
   });
   port.onMessage.addListener((message) => {
     void handlePortMessage(port, message);
@@ -596,8 +574,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case "GITPOD_LOCATION":
         await handleGitpodLocationMessage(message, sender);
         return { ok: true };
-      case "REQUEST_TRIGGER_VISIBILITY":
-        return { type: "TRIGGER_VISIBILITY", visible: panelPorts.size === 0 };
       default:
         return { ok: false };
     }
@@ -675,4 +651,21 @@ chrome.webRequest.onCompleted.addListener(
     urls: [`${GITPOD_ORIGIN}/api/gitpod.v1.EnvironmentService/GetEnvironment`],
     types: ["xmlhttprequest"],
   },
+);
+
+chrome.webRequest.onBeforeSendHeaders.addListener(
+  (details) => {
+    const headers = details.requestHeaders;
+    if (!headers) return;
+    for (const header of headers) {
+      if (header.name.toLowerCase() === "x-gitpod-principal" && header.value) {
+        if (panelRuntime.gitpodPrincipal !== header.value) {
+          panelRuntime.gitpodPrincipal = header.value;
+        }
+        return;
+      }
+    }
+  },
+  { urls: [`${GITPOD_ORIGIN}/api/*`] },
+  ["requestHeaders", "extraHeaders"],
 );

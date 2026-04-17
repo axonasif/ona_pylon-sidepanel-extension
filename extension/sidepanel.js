@@ -23,6 +23,7 @@ const debugJson = document.getElementById("debug-json");
 const reloadButton = document.getElementById("btn-reload");
 const openButton = document.getElementById("btn-open");
 const debugButton = document.getElementById("btn-debug");
+const deleteButton = document.getElementById("btn-delete");
 
 let snapshot = null;
 let loadingTimer = null;
@@ -33,6 +34,9 @@ const localState = {
   lastActiveIssueNumber: null,
   lastReportedVisualSignature: null,
   lastReportedFrameSignature: null,
+  deleteArmed: false,
+  deleteArmedTimer: null,
+  deleteInFlight: false,
 };
 
 function buildCreateConversationUrl(issueNumber) {
@@ -74,10 +78,46 @@ function hideFrameControls() {
   frameControls.classList.remove("visible");
   debugJson.classList.add("hidden");
   debugButton.classList.remove("is-active");
+  disarmDelete();
 }
 
 function isGitpodUrl(url) {
   return typeof url === "string" && url.startsWith(GITPOD_ORIGIN);
+}
+
+function extractEnvironmentId(url) {
+  try {
+    const u = new URL(url);
+    if (u.origin !== GITPOD_ORIGIN) return null;
+    const match = u.pathname.match(/^\/details\/([^/?#]+)/);
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+function getActiveEnvironmentId() {
+  return (
+    extractEnvironmentId(snapshot?.currentIframeUrl) ||
+    extractEnvironmentId(localState.currentFrameSrc)
+  );
+}
+
+function disarmDelete() {
+  localState.deleteArmed = false;
+  if (localState.deleteArmedTimer) {
+    window.clearTimeout(localState.deleteArmedTimer);
+    localState.deleteArmedTimer = null;
+  }
+  deleteButton.classList.remove("is-armed");
+  deleteButton.title = "Delete environment";
+}
+
+function updateDeleteButtonState() {
+  const envId = getActiveEnvironmentId();
+  const canDelete = Boolean(envId) && !localState.deleteInFlight;
+  deleteButton.disabled = !canDelete;
+  if (!canDelete) disarmDelete();
 }
 
 function showStatusView({ tone = "default", eyebrow, title, body, meta, actionLabel }) {
@@ -386,6 +426,7 @@ function render() {
   }
 
   renderDebug(desiredState);
+  updateDeleteButtonState();
 }
 
 frame.addEventListener("load", () => {
@@ -396,6 +437,7 @@ frame.addEventListener("load", () => {
   } else {
     hideFrameControls();
   }
+  updateDeleteButtonState();
   renderDebug(getDesiredState());
 });
 
@@ -435,6 +477,89 @@ openButton.addEventListener("click", () => {
 debugButton.addEventListener("click", () => {
   const hidden = debugJson.classList.toggle("hidden");
   debugButton.classList.toggle("is-active", !hidden);
+});
+
+const pendingDeleteRequests = new Map();
+
+window.addEventListener("message", (event) => {
+  if (event.source !== frame.contentWindow) return;
+  const data = event.data;
+  if (!data || data.type !== "ONA_DELETE_ENVIRONMENT_RESULT") return;
+  const resolver = pendingDeleteRequests.get(data.requestId);
+  if (!resolver) return;
+  pendingDeleteRequests.delete(data.requestId);
+  resolver(data);
+});
+
+function requestDeleteFromIframe(envId) {
+  return new Promise((resolve, reject) => {
+    if (!frame.contentWindow) {
+      reject(new Error("iframe-not-available"));
+      return;
+    }
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const timer = window.setTimeout(() => {
+      if (pendingDeleteRequests.has(requestId)) {
+        pendingDeleteRequests.delete(requestId);
+        reject(new Error("timeout"));
+      }
+    }, 15000);
+    pendingDeleteRequests.set(requestId, (result) => {
+      window.clearTimeout(timer);
+      resolve(result);
+    });
+    frame.contentWindow.postMessage(
+      {
+        type: "ONA_DELETE_ENVIRONMENT",
+        requestId,
+        environmentId: envId,
+        principal: snapshot?.gitpodPrincipal || null,
+      },
+      GITPOD_ORIGIN,
+    );
+  });
+}
+
+deleteButton.addEventListener("click", async () => {
+  const envId = getActiveEnvironmentId();
+  if (!envId || localState.deleteInFlight) return;
+
+  if (!localState.deleteArmed) {
+    localState.deleteArmed = true;
+    deleteButton.classList.add("is-armed");
+    deleteButton.title = "Click again to confirm delete";
+    localState.deleteArmedTimer = window.setTimeout(() => {
+      disarmDelete();
+    }, 3500);
+    return;
+  }
+
+  disarmDelete();
+  localState.deleteInFlight = true;
+  updateDeleteButtonState();
+
+  try {
+    const result = await requestDeleteFromIframe(envId);
+    if (result.ok) {
+      localState.pendingCreateIssue = null;
+      postToPort({
+        type: "ENVIRONMENT_DELETED",
+        environmentId: envId,
+        issueNumber: snapshot?.activeIssueNumber || null,
+      });
+    } else {
+      console.error("Delete environment failed", result);
+      loadingText.textContent = `Delete failed${
+        result.status ? ` (status ${result.status})` : ""
+      }.`;
+    }
+  } catch (error) {
+    console.error("Delete environment error", error);
+    loadingText.textContent = `Delete failed: ${error.message || error}`;
+  } finally {
+    localState.deleteInFlight = false;
+    updateDeleteButtonState();
+  }
 });
 
 function postToPort(message) {

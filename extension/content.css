@@ -33,13 +33,6 @@
   transform: scale(0.96);
 }
 
-#gitpod-sidepanel-trigger.ona-trigger-hidden {
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(8px) scale(0.94);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
-}
-
 #gitpod-sidepanel-trigger svg {
   width: 26px;
   height: 26px;

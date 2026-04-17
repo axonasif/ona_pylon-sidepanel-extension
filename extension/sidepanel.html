@@ -244,6 +244,26 @@
       color: var(--accent);
     }
 
+    .frame-controls-btn:disabled {
+      opacity: 0.35;
+      cursor: default;
+    }
+
+    .frame-controls-btn:disabled:hover {
+      background: transparent;
+      color: var(--muted);
+    }
+
+    .frame-controls-btn.is-armed {
+      background: rgba(255, 138, 138, 0.22);
+      color: var(--danger);
+    }
+
+    .frame-controls-btn.is-armed:hover {
+      background: rgba(255, 138, 138, 0.32);
+      color: var(--danger);
+    }
+
     .debug-overlay {
       position: absolute;
       bottom: 52px;
@@ -289,6 +309,7 @@
       </div>
       <iframe
         id="gitpod-frame"
+        name="ona-side-panel-frame"
         src="about:blank"
         allow="clipboard-read; clipboard-write"
       ></iframe>
@@ -297,6 +318,11 @@
         <button class="frame-controls-btn" id="btn-reload" title="Reload">↻</button>
         <button class="frame-controls-btn" id="btn-open" title="Open in new tab">↗</button>
         <button class="frame-controls-btn" id="btn-debug" title="Toggle debug">⋯</button>
+        <button class="frame-controls-btn" id="btn-delete" title="Delete environment">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path d="M3 5h10M6 5V3.5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1V5M5.5 5l.5 8a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1l.5-8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
       </div>
     </div>
   </div>
