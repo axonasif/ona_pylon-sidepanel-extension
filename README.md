@@ -54,6 +54,14 @@ https://app.gitpod.io/ai?p=<encoded "work on pylon {issueNumber}">#https://githu
 
 The code deliberately does not persist this initial bootstrap URL as the saved conversation. It only persists later Gitpod/Ona URLs that look like a real conversation or environment URL.
 
+Important Gitpod org note:
+
+- if the extension already knows the Gitpod principal for `ona.com`, it currently appends a temporary `ona_target_principal=<principal>` query param before loading Gitpod
+- `gitpod-content.js` reads that value at `document_start`, copies it into `localStorage["principal"]` and `sessionStorage["principal"]`, then immediately removes the query param with `history.replaceState(...)`
+- this is an internal extension bootstrap hint, not a real Gitpod app parameter
+- this exists to avoid an extra reload when steering the side panel into the desired Gitpod organization
+- if we later want a cleaner implementation, this bootstrap can be replaced with an extension-managed storage/session handoff instead of a URL param
+
 ### Saved conversation restore
 
 If the extension already has a saved Ona URL for the current issue, it automatically loads that URL in the side panel iframe.
@@ -135,6 +143,8 @@ Responsibilities:
 - reports the current Gitpod URL to the background worker
 - reports SPA navigation through patched `history` plus `hashchange`
 - marks whether the page appears to be running inside the extension panel by checking `document.referrer`
+- bootstraps the desired Gitpod principal from the temporary `ona_target_principal` query param before the app hydrates
+- reports Gitpod account memberships back to the background worker so the extension can cache org-name -> principal mappings, especially for `ona.com`
 
 ### `extension/sidepanel.html` and `extension/sidepanel.js`
 

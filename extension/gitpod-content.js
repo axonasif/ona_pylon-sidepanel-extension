@@ -3,10 +3,22 @@
 
 (function () {
   const EXTENSION_ORIGIN = new URL(chrome.runtime.getURL("")).origin;
+  const TARGET_PRINCIPAL_QUERY_PARAM = "ona_target_principal";
   const IS_PANEL_FRAME =
     window.parent !== window &&
     (window.name === "ona-side-panel-frame" ||
       document.referrer.startsWith(chrome.runtime.getURL("")));
+  const bootstrapUrl = new URL(window.location.href);
+  const bootstrapPrincipal = bootstrapUrl.searchParams.get(TARGET_PRINCIPAL_QUERY_PARAM);
+
+  if (bootstrapPrincipal) {
+    try {
+      localStorage.setItem("principal", bootstrapPrincipal);
+      sessionStorage.setItem("principal", bootstrapPrincipal);
+      bootstrapUrl.searchParams.delete(TARGET_PRINCIPAL_QUERY_PARAM);
+      history.replaceState(null, "", bootstrapUrl.toString());
+    } catch {}
+  }
 
   if (IS_PANEL_FRAME) {
     if (!document.querySelector("style[data-ona-panel]")) {
@@ -28,6 +40,14 @@
 
   let lastReportedUrl = null;
 
+  function getCurrentPrincipal() {
+    try {
+      return localStorage.getItem("principal") || sessionStorage.getItem("principal") || null;
+    } catch {
+      return null;
+    }
+  }
+
   function reportLocation() {
     const currentUrl = window.location.href;
     if (currentUrl === lastReportedUrl) return;
@@ -38,6 +58,7 @@
       url: currentUrl,
       referrer: document.referrer,
       isPanelFrame: document.referrer.startsWith(chrome.runtime.getURL("")),
+      principal: getCurrentPrincipal(),
     });
   }
 
@@ -62,6 +83,49 @@
 
   installLocationObserver();
   reportLocation();
+
+  async function fetchAccountContext() {
+    const principal = getCurrentPrincipal();
+    const headers = {
+      accept: "*/*",
+      "content-type": "application/json",
+      "connect-protocol-version": "1",
+      "x-gitpod-client": "web",
+    };
+    if (principal) {
+      headers["x-gitpod-principal"] = principal;
+    }
+
+    const response = await fetch("/api/gitpod.v1.AccountService/GetAccount", {
+      method: "POST",
+      credentials: "same-origin",
+      headers,
+      body: JSON.stringify({}),
+    });
+
+    if (!response.ok) {
+      throw new Error(`get-account-failed-${response.status}`);
+    }
+
+    const data = await response.json();
+    return {
+      currentPrincipal: principal,
+      memberships: data?.account?.memberships || [],
+    };
+  }
+
+  function reportAccountContext() {
+    fetchAccountContext()
+      .then((context) => {
+        chrome.runtime.sendMessage({
+          type: "GITPOD_ACCOUNT_CONTEXT",
+          context,
+        });
+      })
+      .catch(() => {});
+  }
+
+  reportAccountContext();
 
   async function runDeleteEnvironment(environmentId, principal) {
     const headers = {
@@ -123,5 +187,14 @@
           );
         } catch {}
       });
+  });
+
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message?.type !== "REQUEST_GITPOD_ACCOUNT_CONTEXT") return;
+
+    fetchAccountContext()
+      .then((context) => sendResponse({ ok: true, context }))
+      .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+    return true;
   });
 })();

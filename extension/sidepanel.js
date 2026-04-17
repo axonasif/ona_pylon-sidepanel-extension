@@ -43,13 +43,32 @@ const localState = {
 };
 
 function buildCreateConversationUrl(issueNumber) {
-  const prompt = encodeURIComponent(`work on pylon ${issueNumber}`);
-  return `${GITPOD_ORIGIN}/ai?p=${prompt}#${DEFAULT_REPO_URL}`;
+  const url = new URL(`${GITPOD_ORIGIN}/ai`);
+  url.searchParams.set("p", `work on pylon ${issueNumber}`);
+  if (snapshot?.preferredGitpodPrincipal) {
+    url.searchParams.set("ona_target_principal", snapshot.preferredGitpodPrincipal);
+  }
+  url.hash = DEFAULT_REPO_URL;
+  return url.toString();
 }
 
 function normalizeUrl(urlString) {
   try {
     return new URL(urlString).toString();
+  } catch {
+    return urlString || null;
+  }
+}
+
+function decorateGitpodUrl(urlString) {
+  if (!snapshot?.preferredGitpodPrincipal || !isGitpodUrl(urlString)) {
+    return urlString || null;
+  }
+
+  try {
+    const url = new URL(urlString);
+    url.searchParams.set("ona_target_principal", snapshot.preferredGitpodPrincipal);
+    return url.toString();
   } catch {
     return urlString || null;
   }
@@ -223,7 +242,7 @@ function getDesiredState() {
     return {
       visualState: "loading",
       issueNumber,
-      targetUrl: snapshot.savedConversationUrl,
+      targetUrl: decorateGitpodUrl(snapshot.savedConversationUrl),
       reason: "saved",
     };
   }
@@ -301,6 +320,7 @@ function renderDebug(desiredState) {
     activePylonUrl: snapshot?.activePylonUrl || null,
     activeIssueNumber: snapshot?.activeIssueNumber || null,
     savedConversationUrl: snapshot?.savedConversationUrl || null,
+    preferredGitpodPrincipal: snapshot?.preferredGitpodPrincipal || null,
     currentIframeUrl: snapshot?.currentIframeUrl || null,
     currentFrameSrc: localState.currentFrameSrc,
     expectedFrameUrl: snapshot?.expectedFrameUrl || null,
@@ -327,7 +347,11 @@ function getOpenTargetUrl(desiredState) {
   }
 
   if (desiredState.issueNumber) {
-    return snapshot?.savedConversationUrl || desiredState.targetUrl || buildCreateConversationUrl(desiredState.issueNumber);
+    return (
+      decorateGitpodUrl(snapshot?.savedConversationUrl) ||
+      desiredState.targetUrl ||
+      buildCreateConversationUrl(desiredState.issueNumber)
+    );
   }
 
   return GITPOD_ORIGIN;

@@ -2,9 +2,11 @@ const GITPOD_ORIGIN = "https://app.gitpod.io";
 const DEFAULT_REPO_URL = "https://github.com/gitpod-io/gitpod-next";
 const CONVERSATION_STORAGE_KEY = "issueConversationUrls";
 const PYLON_URL_STORAGE_KEY = "issuePylonUrls";
+const GITPOD_PRINCIPALS_STORAGE_KEY = "gitpodPrincipalsByOrg";
 const PANEL_PORT_NAME = "sidepanel";
 const EXTENSION_ORIGIN = chrome.runtime.getURL("");
 const PENDING_CONVERSATION_CAPTURE_MS = 2 * 60 * 1000;
+const TARGET_GITPOD_ORG_NAME = "ona.com";
 
 const panelPorts = new Set();
 const pylonContexts = new Map();
@@ -30,6 +32,7 @@ const panelRuntime = {
 
 let conversationCache = null;
 let pylonUrlCache = null;
+let gitpodPrincipalsCache = null;
 
 function isGitpodDetailsUrl(urlString) {
   try {
@@ -99,6 +102,10 @@ function canonicalizeConversationUrl(urlString) {
   } catch {
     return null;
   }
+}
+
+function normalizeOrgName(name) {
+  return (name || "").trim().toLowerCase();
 }
 
 function isValidConversationUrl(urlString) {
@@ -203,6 +210,63 @@ async function getPylonUrlCache() {
   const result = await chrome.storage.local.get(PYLON_URL_STORAGE_KEY);
   pylonUrlCache = result[PYLON_URL_STORAGE_KEY] || {};
   return pylonUrlCache;
+}
+
+async function getGitpodPrincipalsCache() {
+  if (gitpodPrincipalsCache) return gitpodPrincipalsCache;
+
+  const result = await chrome.storage.local.get(GITPOD_PRINCIPALS_STORAGE_KEY);
+  gitpodPrincipalsCache = result[GITPOD_PRINCIPALS_STORAGE_KEY] || {};
+  return gitpodPrincipalsCache;
+}
+
+async function mergeGitpodPrincipals(entries) {
+  if (!entries || Object.keys(entries).length === 0) return false;
+
+  const existing = { ...(await getGitpodPrincipalsCache()) };
+  let didChange = false;
+
+  for (const [orgName, principal] of Object.entries(entries)) {
+    if (!orgName || !principal) continue;
+    if (existing[orgName] === principal) continue;
+    existing[orgName] = principal;
+    didChange = true;
+  }
+
+  if (!didChange) return false;
+
+  gitpodPrincipalsCache = existing;
+  await chrome.storage.local.set({ [GITPOD_PRINCIPALS_STORAGE_KEY]: existing });
+  return true;
+}
+
+async function resolvePreferredGitpodPrincipal() {
+  const cache = await getGitpodPrincipalsCache();
+  const preferredOrgKey = normalizeOrgName(TARGET_GITPOD_ORG_NAME);
+  if (cache[preferredOrgKey]) return cache[preferredOrgKey];
+
+  const gitpodTabs = await chrome.tabs.query({ url: `${GITPOD_ORIGIN}/*` });
+  for (const tab of gitpodTabs) {
+    if (!tab.id) continue;
+    try {
+      const response = await chrome.tabs.sendMessage(tab.id, {
+        type: "REQUEST_GITPOD_ACCOUNT_CONTEXT",
+      });
+      if (!response?.ok) continue;
+      const memberships = response.context?.memberships || [];
+      const entries = Object.fromEntries(
+        memberships
+          .filter((membership) => membership?.organizationName && membership?.userId)
+          .map((membership) => [normalizeOrgName(membership.organizationName), membership.userId]),
+      );
+      await mergeGitpodPrincipals(entries);
+      if (entries[preferredOrgKey]) return entries[preferredOrgKey];
+    } catch {
+      // Tab may not have the Gitpod content script available yet.
+    }
+  }
+
+  return null;
 }
 
 async function setPylonUrlForIssue(issueNumber, pylonUrl) {
@@ -347,6 +411,7 @@ async function buildSnapshot() {
   const activeTab = await getPanelSourceTab();
   const activeContext = await getActivePylonContext();
   const conversations = await getConversationCache();
+  const preferredGitpodPrincipal = await resolvePreferredGitpodPrincipal();
   const activeIssueNumber = activeContext?.issueNumber || null;
   const activeTabUrl = activeTab?.url ?? null;
 
@@ -368,6 +433,7 @@ async function buildSnapshot() {
     activePylonUrl: activeContext?.url ?? null,
     activeIssueNumber,
     savedConversationUrl: activeIssueNumber ? conversations[activeIssueNumber] || null : null,
+    preferredGitpodPrincipal,
     reverseIssueNumber,
     reversePylonUrl,
     currentIframeUrl: panelRuntime.currentIframeUrl,
@@ -461,6 +527,7 @@ async function handleGitpodLocationMessage(message, sender) {
     isPanelFrame,
     referrer: message.referrer || "",
     issueNumber,
+    principal: message.principal || null,
   };
 
   if (session.documentId) {
@@ -480,6 +547,9 @@ async function handleGitpodLocationMessage(message, sender) {
     panelRuntime.gitpodPrincipal = null;
   }
   panelRuntime.gitpodDocumentId = sender.documentId || panelRuntime.gitpodDocumentId;
+  if (message.principal) {
+    panelRuntime.gitpodPrincipal = message.principal;
+  }
 
   if (issueNumber && shouldPersistConversationUrl(message.url)) {
     await setConversationForIssue(issueNumber, message.url);
@@ -488,6 +558,19 @@ async function handleGitpodLocationMessage(message, sender) {
   }
 
   await broadcastSnapshot();
+}
+
+async function handleGitpodAccountContextMessage(message) {
+  const memberships = message.context?.memberships || [];
+  const entries = Object.fromEntries(
+    memberships
+      .filter((membership) => membership?.organizationName && membership?.userId)
+      .map((membership) => [normalizeOrgName(membership.organizationName), membership.userId]),
+  );
+  const didChange = await mergeGitpodPrincipals(entries);
+  if (didChange) {
+    await broadcastSnapshot();
+  }
 }
 
 async function handleEnvironmentDeletedFromPanel(message) {
@@ -637,6 +720,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case "GITPOD_LOCATION":
         await handleGitpodLocationMessage(message, sender);
         return { ok: true };
+      case "GITPOD_ACCOUNT_CONTEXT":
+        await handleGitpodAccountContextMessage(message);
+        return { ok: true };
       case "ENSURE_ONA_AI_TAG_FOR_ACTIVE_ISSUE":
         return await ensureOnaAiTagForActiveIssue();
       default:
@@ -706,6 +792,10 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   }
   if (changes[PYLON_URL_STORAGE_KEY]) {
     pylonUrlCache = changes[PYLON_URL_STORAGE_KEY].newValue || {};
+    shouldBroadcast = true;
+  }
+  if (changes[GITPOD_PRINCIPALS_STORAGE_KEY]) {
+    gitpodPrincipalsCache = changes[GITPOD_PRINCIPALS_STORAGE_KEY].newValue || {};
     shouldBroadcast = true;
   }
 
