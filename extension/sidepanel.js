@@ -19,6 +19,7 @@ const statusTitle = document.getElementById("status-title");
 const statusBody = document.getElementById("status-body");
 const statusMeta = document.getElementById("status-meta");
 const primaryAction = document.getElementById("primary-action");
+const secondaryAction = document.getElementById("secondary-action");
 const debugJson = document.getElementById("debug-json");
 const floatingNotice = document.getElementById("floating-notice");
 const reloadButton = document.getElementById("btn-reload");
@@ -31,6 +32,7 @@ let loadingTimer = null;
 
 const localState = {
   pendingCreateIssue: null,
+  pendingCreateTargetUrl: null,
   currentFrameSrc: null,
   lastActiveIssueNumber: null,
   lastReportedVisualSignature: null,
@@ -42,9 +44,17 @@ const localState = {
   deleteInFlight: false,
 };
 
-function buildCreateConversationUrl(issueNumber) {
+function buildPromptText(issueNumber, variant = "default") {
+  if (variant === "custom") {
+    return `Context: pylon ${issueNumber}\n\nAsk: `;
+  }
+
+  return `work on pylon ${issueNumber}`;
+}
+
+function buildCreateConversationUrl(issueNumber, variant = "default") {
   const url = new URL(`${GITPOD_ORIGIN}/ai`);
-  url.searchParams.set("p", `work on pylon ${issueNumber}`);
+  url.searchParams.set("p", buildPromptText(issueNumber, variant));
   if (snapshot?.preferredGitpodPrincipal) {
     url.searchParams.set("ona_target_principal", snapshot.preferredGitpodPrincipal);
   }
@@ -166,7 +176,15 @@ function updateDeleteButtonState() {
   if (!canDelete) disarmDelete();
 }
 
-function showStatusView({ tone = "default", eyebrow, title, body, meta, actionLabel }) {
+function showStatusView({
+  tone = "default",
+  eyebrow,
+  title,
+  body,
+  meta,
+  actionLabel,
+  secondaryActionLabel,
+}) {
   statusView.classList.remove("hidden");
   frameShell.classList.add("hidden");
   statusView.dataset.tone = tone;
@@ -191,6 +209,18 @@ function showStatusView({ tone = "default", eyebrow, title, body, meta, actionLa
     primaryAction.classList.add("hidden");
     primaryAction.textContent = "";
     primaryAction.disabled = false;
+  }
+
+  if (secondaryActionLabel) {
+    secondaryAction.classList.remove("hidden");
+    secondaryAction.title = secondaryActionLabel;
+    secondaryAction.setAttribute("aria-label", secondaryActionLabel);
+    secondaryAction.disabled = false;
+  } else {
+    secondaryAction.classList.add("hidden");
+    secondaryAction.title = "";
+    secondaryAction.setAttribute("aria-label", "");
+    secondaryAction.disabled = false;
   }
 }
 
@@ -251,7 +281,7 @@ function getDesiredState() {
     return {
       visualState: "loading",
       issueNumber,
-      targetUrl: buildCreateConversationUrl(issueNumber),
+      targetUrl: localState.pendingCreateTargetUrl || buildCreateConversationUrl(issueNumber),
       reason: "create",
     };
   }
@@ -366,6 +396,7 @@ function render() {
       localState.lastActiveIssueNumber !== desiredState.issueNumber
     ) {
       localState.pendingCreateIssue = null;
+      localState.pendingCreateTargetUrl = null;
       localState.tagSyncInFlightForIssue = null;
       localState.lastReportedFrameSignature = null;
     }
@@ -425,6 +456,7 @@ function render() {
         body: "No saved Ona conversation exists for this Pylon issue yet.",
         meta: `Repo: ${DEFAULT_REPO_URL}`,
         actionLabel: "Create Ona conversation",
+        secondaryActionLabel: "Create with editable prompt",
       });
       reportVisualState("create", desiredState.issueNumber, null);
       break;
@@ -438,6 +470,7 @@ function render() {
         body: "The saved environment for this issue appears to have been auto-deleted. Create a fresh Ona conversation to continue.",
         meta: `Issue #${desiredState.issueNumber}`,
         actionLabel: "Create Ona conversation",
+        secondaryActionLabel: "Create with editable prompt",
       });
       reportVisualState("stale-env", desiredState.issueNumber, null);
       break;
@@ -502,7 +535,7 @@ frame.addEventListener("error", (event) => {
   console.error("iframe error:", event);
 });
 
-primaryAction.addEventListener("click", () => {
+function startCreateFlow(variant = "default") {
   void (async () => {
     const desiredState = getDesiredState();
 
@@ -518,6 +551,7 @@ primaryAction.addEventListener("click", () => {
     render();
 
     localState.pendingCreateIssue = issueNumber;
+    localState.pendingCreateTargetUrl = buildCreateConversationUrl(issueNumber, variant);
     localState.lastReportedFrameSignature = null;
     render();
 
@@ -546,6 +580,14 @@ primaryAction.addEventListener("click", () => {
         }
       });
   })();
+}
+
+primaryAction.addEventListener("click", () => {
+  startCreateFlow("default");
+});
+
+secondaryAction.addEventListener("click", () => {
+  startCreateFlow("custom");
 });
 
 reloadButton.addEventListener("click", () => {
@@ -686,6 +728,7 @@ function connectToBackground() {
     snapshot = message.snapshot;
     if (snapshot?.savedConversationUrl) {
       localState.pendingCreateIssue = null;
+      localState.pendingCreateTargetUrl = null;
     }
     render();
   });

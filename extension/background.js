@@ -7,6 +7,7 @@ const PANEL_PORT_NAME = "sidepanel";
 const EXTENSION_ORIGIN = chrome.runtime.getURL("");
 const PENDING_CONVERSATION_CAPTURE_MS = 2 * 60 * 1000;
 const TARGET_GITPOD_ORG_NAME = "ona.com";
+const INTERNAL_GITPOD_QUERY_PARAMS = new Set(["ona_target_principal"]);
 
 const panelPorts = new Set();
 const pylonContexts = new Map();
@@ -92,6 +93,25 @@ function normalizeUrl(urlString) {
   }
 }
 
+function stripInternalGitpodQueryParams(urlString) {
+  try {
+    const url = new URL(urlString);
+    if (url.origin !== GITPOD_ORIGIN) return url.toString();
+
+    for (const param of INTERNAL_GITPOD_QUERY_PARAMS) {
+      url.searchParams.delete(param);
+    }
+
+    return url.toString();
+  } catch {
+    return urlString || null;
+  }
+}
+
+function normalizeGitpodComparableUrl(urlString) {
+  return normalizeUrl(stripInternalGitpodQueryParams(urlString));
+}
+
 function canonicalizeConversationUrl(urlString) {
   try {
     const url = new URL(urlString);
@@ -145,7 +165,12 @@ function beginPendingConversationCapture(issueNumber, createUrl) {
 function maybeMarkPendingCaptureGitpodTab(tabId, urlString) {
   const pendingCapture = getActivePendingConversationCapture();
   if (!pendingCapture || !tabId) return false;
-  if (normalizeUrl(urlString) !== normalizeUrl(pendingCapture.createUrl)) return false;
+  if (
+    normalizeGitpodComparableUrl(urlString) !==
+    normalizeGitpodComparableUrl(pendingCapture.createUrl)
+  ) {
+    return false;
+  }
 
   if (pendingCapture.gitpodTabId && pendingCapture.gitpodTabId !== tabId) return false;
   if (pendingCapture.gitpodTabId === tabId) return false;
@@ -490,10 +515,10 @@ async function handleGitpodLocationMessage(message, sender) {
   const existingSession = sender.documentId ? gitpodDocuments.get(sender.documentId) : null;
   const pendingCapture = getActivePendingConversationCapture();
   const senderTabId = sender.tab?.id || null;
-  const normalizedMessageUrl = normalizeUrl(message.url);
-  const normalizedReferrer = normalizeUrl(message.referrer || "");
-  const normalizedExpectedFrameUrl = normalizeUrl(panelRuntime.expectedFrameUrl);
-  const normalizedPendingCreateUrl = normalizeUrl(pendingCapture?.createUrl || null);
+  const normalizedMessageUrl = normalizeGitpodComparableUrl(message.url);
+  const normalizedReferrer = normalizeGitpodComparableUrl(message.referrer || "");
+  const normalizedExpectedFrameUrl = normalizeGitpodComparableUrl(panelRuntime.expectedFrameUrl);
+  const normalizedPendingCreateUrl = normalizeGitpodComparableUrl(pendingCapture?.createUrl || null);
   const matchesExpectedFrameUrl =
     Boolean(normalizedExpectedFrameUrl) &&
     (normalizedMessageUrl === normalizedExpectedFrameUrl ||

@@ -57,7 +57,7 @@
       type: "GITPOD_LOCATION",
       url: currentUrl,
       referrer: document.referrer,
-      isPanelFrame: document.referrer.startsWith(chrome.runtime.getURL("")),
+      isPanelFrame: IS_PANEL_FRAME,
       principal: getCurrentPrincipal(),
     });
   }
@@ -71,8 +71,9 @@
     window.addEventListener("focus", notify);
     document.addEventListener("visibilitychange", notify);
 
+    const root = document.documentElement || document;
     const observer = new MutationObserver(notify);
-    observer.observe(document.documentElement, {
+    observer.observe(root, {
       childList: true,
       subtree: true,
       attributes: true,
