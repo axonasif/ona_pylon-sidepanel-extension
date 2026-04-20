@@ -46,10 +46,10 @@ const localState = {
 
 function buildPromptText(issueNumber, variant = "default") {
   if (variant === "custom") {
-    return `Context: pylon ${issueNumber}\n\nAsk: `;
+    return `Context: /pylon ${issueNumber}\n\nAsk: `;
   }
 
-  return `work on pylon ${issueNumber}`;
+  return `/pylon ${issueNumber}`;
 }
 
 function buildCreateConversationUrl(issueNumber, variant = "default") {

@@ -82,7 +82,7 @@ function buildPylonContext(urlString, source = "background") {
 }
 
 function buildCreateConversationUrl(issueNumber) {
-  const prompt = encodeURIComponent(`work on pylon ${issueNumber}`);
+  const prompt = encodeURIComponent(`/pylon ${issueNumber}`);
   return `${GITPOD_ORIGIN}/ai?p=${prompt}#${DEFAULT_REPO_URL}`;
 }
 
