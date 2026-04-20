@@ -1,0 +1,4 @@
+interface:
+  display_name: "Logo Asset Compositing"
+  short_description: "Source, rasterize, and composite app logos cleanly"
+  default_prompt: "Use $logo-asset-compositing to source official logos and build clean app or extension icons without edge artifacts."

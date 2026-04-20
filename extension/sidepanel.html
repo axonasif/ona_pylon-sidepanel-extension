@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Ona</title>
+  <title>Ona for Pylon</title>
   <style>
     :root {
       color-scheme: dark;
@@ -318,7 +318,7 @@
 
     .floating-notice {
       position: absolute;
-      top: 12px;
+      bottom: 52px;
       left: 12px;
       right: 12px;
       padding: 10px 12px;
@@ -374,7 +374,13 @@
       <div class="frame-controls" id="frame-controls">
         <button class="frame-controls-btn" id="btn-reload" title="Reload">↻</button>
         <button class="frame-controls-btn" id="btn-open" title="Open in new tab">↗</button>
-        <button class="frame-controls-btn" id="btn-debug" title="Toggle debug">⋯</button>
+        <button class="frame-controls-btn" id="btn-debug" title="Toggle debug" aria-label="Toggle debug">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M9 7.5V6a3 3 0 0 1 6 0v1.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            <path d="M8.5 9.5h7a3.5 3.5 0 0 1 3.5 3.5v1a6 6 0 0 1-12 0v-1a3.5 3.5 0 0 1 3.5-3.5Z" stroke="currentColor" stroke-width="1.8"/>
+            <path d="M4.5 11.5 7 12.5M19.5 11.5 17 12.5M5 17l2.5-1M19 17l-2.5-1M12 15v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
         <button class="frame-controls-btn" id="btn-delete" title="Delete environment">
           <svg width="13" height="13" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
             <path d="M3 5h10M6 5V3.5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1V5M5.5 5l.5 8a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1l.5-8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>

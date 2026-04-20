@@ -48,6 +48,11 @@
     }
   }
 
+  function toPrincipalHeaderValue(principal) {
+    if (!principal) return null;
+    return principal.includes("/") ? principal : `user/${principal}`;
+  }
+
   function reportLocation() {
     const currentUrl = window.location.href;
     if (currentUrl === lastReportedUrl) return;
@@ -93,8 +98,9 @@
       "connect-protocol-version": "1",
       "x-gitpod-client": "web",
     };
-    if (principal) {
-      headers["x-gitpod-principal"] = principal;
+    const headerPrincipal = toPrincipalHeaderValue(principal);
+    if (headerPrincipal) {
+      headers["x-gitpod-principal"] = headerPrincipal;
     }
 
     const response = await fetch("/api/gitpod.v1.AccountService/GetAccount", {
@@ -129,14 +135,15 @@
   reportAccountContext();
 
   async function runDeleteEnvironment(environmentId, principal) {
+    const effectivePrincipal = toPrincipalHeaderValue(principal || getCurrentPrincipal());
     const headers = {
       "accept": "*/*",
       "content-type": "application/json",
       "connect-protocol-version": "1",
       "x-gitpod-client": "web",
     };
-    if (principal) {
-      headers["x-gitpod-principal"] = principal;
+    if (effectivePrincipal) {
+      headers["x-gitpod-principal"] = effectivePrincipal;
     }
 
     const response = await fetch(

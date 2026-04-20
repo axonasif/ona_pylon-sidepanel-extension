@@ -12,6 +12,7 @@ const INTERNAL_GITPOD_QUERY_PARAMS = new Set(["ona_target_principal"]);
 const panelPorts = new Set();
 const pylonContexts = new Map();
 const gitpodDocuments = new Map();
+const openSidePanelTabIds = new Set();
 let lastNonExtensionTabId = null;
 let allowExtensionDebugFallback = false;
 
@@ -492,6 +493,28 @@ async function broadcastSnapshot() {
   await Promise.all(ports.map((port) => postSnapshot(port)));
 }
 
+function isSidePanelOpenForTab(tabId) {
+  return Boolean(tabId && openSidePanelTabIds.has(tabId));
+}
+
+async function toggleSidePanelForTab(tab) {
+  if (!tab?.id) return false;
+
+  lastNonExtensionTabId = tab.id;
+
+  if (isSidePanelOpenForTab(tab.id) && typeof chrome.sidePanel.close === "function") {
+    await chrome.sidePanel.close({ tabId: tab.id });
+    openSidePanelTabIds.delete(tab.id);
+    await broadcastSnapshot();
+    return false;
+  }
+
+  await chrome.sidePanel.open({ tabId: tab.id });
+  await refreshTabContext(tab.id, tab.url);
+  await broadcastSnapshot();
+  return true;
+}
+
 async function handlePylonContextMessage(message, sender) {
   if (!sender.tab?.id || !message.context) return;
 
@@ -705,13 +728,7 @@ async function handleStaleEnvironmentRequest(details) {
 }
 
 chrome.action.onClicked.addListener(async (tab) => {
-  if (tab?.id) {
-    lastNonExtensionTabId = tab.id;
-    await chrome.sidePanel.open({ tabId: tab.id });
-    await refreshTabContext(tab.id, tab.url);
-  }
-
-  await broadcastSnapshot();
+  await toggleSidePanelForTab(tab);
 });
 
 chrome.runtime.onConnect.addListener((port) => {
@@ -732,13 +749,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const handler = (async () => {
     switch (message?.type || message?.action) {
       case "openSidePanel":
-        if (sender.tab?.id) {
-          lastNonExtensionTabId = sender.tab.id;
-          await chrome.sidePanel.open({ tabId: sender.tab.id });
-          await refreshTabContext(sender.tab.id, sender.tab.url);
-          await broadcastSnapshot();
-        }
-        return { ok: true };
+        return { ok: await toggleSidePanelForTab(sender.tab || null) };
       case "PYLON_CONTEXT":
         await handlePylonContextMessage(message, sender);
         return { ok: true };
@@ -804,8 +815,27 @@ chrome.tabs.onActivated.addListener((activeInfo) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   pylonContexts.delete(tabId);
+  openSidePanelTabIds.delete(tabId);
   void broadcastSnapshot();
 });
+
+if (chrome.sidePanel.onOpened?.addListener) {
+  chrome.sidePanel.onOpened.addListener((info) => {
+    if (info.tabId) {
+      openSidePanelTabIds.add(info.tabId);
+    }
+    void broadcastSnapshot();
+  });
+}
+
+if (chrome.sidePanel.onClosed?.addListener) {
+  chrome.sidePanel.onClosed.addListener((info) => {
+    if (info.tabId) {
+      openSidePanelTabIds.delete(info.tabId);
+    }
+    void broadcastSnapshot();
+  });
+}
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== "local") return;

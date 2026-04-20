@@ -657,15 +657,18 @@ deleteButton.addEventListener("click", async () => {
     localState.deleteArmed = true;
     deleteButton.classList.add("is-armed");
     deleteButton.title = "Click again to confirm delete";
+    showNotice("Click delete again within 5 seconds to remove this Ona environment.", 5000);
     localState.deleteArmedTimer = window.setTimeout(() => {
       disarmDelete();
-    }, 3500);
+    }, 5000);
     return;
   }
 
   disarmDelete();
   localState.deleteInFlight = true;
   updateDeleteButtonState();
+  startLoading("Deleting Ona environment…");
+  showNotice("Deleting environment…", 12000);
 
   try {
     const result = await requestDeleteFromIframe(envId);
@@ -678,13 +681,20 @@ deleteButton.addEventListener("click", async () => {
       });
     } else {
       console.error("Delete environment failed", result);
+      stopLoading();
       loadingText.textContent = `Delete failed${
         result.status ? ` (status ${result.status})` : ""
       }.`;
+      showNotice(
+        `Delete failed${result.status ? ` (status ${result.status})` : ""}.`,
+        9000,
+      );
     }
   } catch (error) {
     console.error("Delete environment error", error);
+    stopLoading();
     loadingText.textContent = `Delete failed: ${error.message || error}`;
+    showNotice(`Delete failed: ${error.message || error}`, 9000);
   } finally {
     localState.deleteInFlight = false;
     updateDeleteButtonState();
