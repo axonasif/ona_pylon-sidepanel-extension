@@ -424,10 +424,7 @@ function getDesiredState() {
     };
   }
 
-  if (
-    localState.pendingOrgBootstrap?.issueNumber === issueNumber &&
-    !snapshot.preferredGitpodPrincipal
-  ) {
+  if (localState.pendingOrgBootstrap?.issueNumber === issueNumber) {
     return {
       visualState: "org-bootstrap",
       issueNumber,
@@ -578,7 +575,7 @@ function maybeShowPrincipalWarning(desiredState) {
 
   localState.lastPrincipalWarningSignature = signature;
   showNotice(
-    `Gitpod appears to be using a different organization than ${TARGET_GITPOD_ORG_NAME}. If Ona behaves unexpectedly, switch Gitpod to ${TARGET_GITPOD_ORG_NAME} and reload this panel.`,
+    `app.gitpod.io appears to be using a different organization than ${TARGET_GITPOD_ORG_NAME}. If Ona behaves unexpectedly, switch Gitpod to ${TARGET_GITPOD_ORG_NAME} and reload this panel.`,
     15000,
   );
 }

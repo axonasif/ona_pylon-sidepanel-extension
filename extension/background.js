@@ -23,6 +23,7 @@ const panelRuntime = {
   visualState: "resolving",
   currentIframeUrl: null,
   expectedFrameUrl: null,
+  panelFrameReason: null,
   pendingConversationCapture: null,
   lastObservedGitpodUrl: null,
   lastObservedGitpodSource: null,
@@ -559,7 +560,7 @@ async function handleGitpodLocationMessage(message, sender) {
     panelRuntime.gitpodPrincipal = message.principal;
   }
 
-  if (issueNumber && shouldPersistConversationUrl(message.url)) {
+  if (issueNumber && panelRuntime.panelFrameReason !== "org-check" && shouldPersistConversationUrl(message.url)) {
     await setConversationForIssue(issueNumber, message.url);
     panelRuntime.pendingConversationCapture = null;
     panelRuntime.expectedFrameUrl = message.url;
@@ -641,6 +642,7 @@ async function handleEnvironmentDeletedFromPanel(message) {
     await clearConversationForIssue(issueNumber);
   }
   panelRuntime.expectedFrameUrl = null;
+  panelRuntime.panelFrameReason = null;
   panelRuntime.pendingConversationCapture = null;
   panelRuntime.currentIframeUrl = null;
   await broadcastSnapshot();
@@ -695,6 +697,7 @@ async function handlePortMessage(port, message) {
       panelRuntime.visualState = message.visualState || panelRuntime.visualState;
       panelRuntime.expectedFrameUrl = message.url || null;
       panelRuntime.currentIframeUrl = message.url || null;
+      panelRuntime.panelFrameReason = message.reason || null;
       if (message.reason === "create") {
         panelRuntime.lastCreateUrl = message.url || null;
         beginPendingConversationCapture(message.issueNumber || null, message.url || null);
