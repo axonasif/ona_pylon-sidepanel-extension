@@ -17,7 +17,7 @@
     },
     "condition": {
       "urlFilter": "||app.gitpod.io",
-      "resourceTypes": ["sub_frame", "main_frame", "xmlhttprequest", "other"]
+      "resourceTypes": ["sub_frame"]
     }
   }
 ]

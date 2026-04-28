@@ -1,4 +1,6 @@
 (function () {
+  if (window.parent === window || window.name !== "ona-side-panel-frame") return;
+
   const PROJECT_ENVIRONMENT_CLASSES_PATH =
     "/api/gitpod.v1.ProjectService/ListProjectEnvironmentClasses";
   const BRIDGE_EVENT = "ona-pylon-extension:gitpod-project-environment-classes";

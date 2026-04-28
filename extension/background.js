@@ -7,7 +7,6 @@ const PANEL_PORT_NAME = "sidepanel";
 const EXTENSION_ORIGIN = chrome.runtime.getURL("");
 const PENDING_CONVERSATION_CAPTURE_MS = 2 * 60 * 1000;
 const TARGET_GITPOD_ORG_NAME = "ona.com";
-const INTERNAL_GITPOD_QUERY_PARAMS = new Set(["ona_target_principal"]);
 
 const panelPorts = new Set();
 const pylonContexts = new Map();
@@ -15,6 +14,7 @@ const gitpodDocuments = new Map();
 const openSidePanelTabIds = new Set();
 let lastNonExtensionTabId = null;
 let allowExtensionDebugFallback = false;
+let preferredGitpodPrincipalMissAt = 0;
 
 const panelRuntime = {
   issueNumber: null,
@@ -36,6 +36,8 @@ const panelRuntime = {
 let conversationCache = null;
 let pylonUrlCache = null;
 let gitpodPrincipalsCache = null;
+
+const PREFERRED_GITPOD_PRINCIPAL_MISS_COOLDOWN_MS = 30 * 1000;
 
 function isGitpodDetailsUrl(urlString) {
   try {
@@ -87,33 +89,6 @@ function buildCreateConversationUrl(issueNumber) {
   return `${GITPOD_ORIGIN}/ai?p=${prompt}#${DEFAULT_REPO_URL}`;
 }
 
-function normalizeUrl(urlString) {
-  try {
-    return new URL(urlString).toString();
-  } catch {
-    return urlString || null;
-  }
-}
-
-function stripInternalGitpodQueryParams(urlString) {
-  try {
-    const url = new URL(urlString);
-    if (url.origin !== GITPOD_ORIGIN) return url.toString();
-
-    for (const param of INTERNAL_GITPOD_QUERY_PARAMS) {
-      url.searchParams.delete(param);
-    }
-
-    return url.toString();
-  } catch {
-    return urlString || null;
-  }
-}
-
-function normalizeGitpodComparableUrl(urlString) {
-  return normalizeUrl(stripInternalGitpodQueryParams(urlString));
-}
-
 function canonicalizeConversationUrl(urlString) {
   try {
     const url = new URL(urlString);
@@ -124,6 +99,12 @@ function canonicalizeConversationUrl(urlString) {
   } catch {
     return null;
   }
+}
+
+function areSameConversationUrl(leftUrlString, rightUrlString) {
+  const left = canonicalizeConversationUrl(leftUrlString);
+  const right = canonicalizeConversationUrl(rightUrlString);
+  return Boolean(left && right && left === right);
 }
 
 function normalizeOrgName(name) {
@@ -160,43 +141,13 @@ function beginPendingConversationCapture(issueNumber, createUrl) {
     issueNumber,
     createUrl,
     startedAt: Date.now(),
-    gitpodTabId: null,
   };
-}
-
-function maybeMarkPendingCaptureGitpodTab(tabId, urlString) {
-  const pendingCapture = getActivePendingConversationCapture();
-  if (!pendingCapture || !tabId) return false;
-  if (
-    normalizeGitpodComparableUrl(urlString) !==
-    normalizeGitpodComparableUrl(pendingCapture.createUrl)
-  ) {
-    return false;
-  }
-
-  if (pendingCapture.gitpodTabId && pendingCapture.gitpodTabId !== tabId) return false;
-  if (pendingCapture.gitpodTabId === tabId) return false;
-  pendingCapture.gitpodTabId = tabId;
-  return true;
 }
 
 function noteGitpodObservation(urlString, source) {
   panelRuntime.lastObservedGitpodUrl = urlString || null;
   panelRuntime.lastObservedGitpodSource = source || null;
   panelRuntime.lastGitpodLocationUpdateAt = Date.now();
-}
-
-async function maybePersistPendingConversationUrl(urlString, source, tabId = null) {
-  const pendingCapture = getActivePendingConversationCapture();
-  if (!pendingCapture) return false;
-  if (!shouldPersistConversationUrl(urlString)) return false;
-  if (tabId && pendingCapture.gitpodTabId !== tabId) return false;
-
-  noteGitpodObservation(urlString, source);
-  await setConversationForIssue(pendingCapture.issueNumber, urlString);
-  panelRuntime.pendingConversationCapture = null;
-  panelRuntime.expectedFrameUrl = urlString;
-  return true;
 }
 
 async function getConversationCache() {
@@ -271,6 +222,12 @@ async function resolvePreferredGitpodPrincipal() {
   const cache = await getGitpodPrincipalsCache();
   const preferredOrgKey = normalizeOrgName(TARGET_GITPOD_ORG_NAME);
   if (cache[preferredOrgKey]) return cache[preferredOrgKey];
+  if (
+    preferredGitpodPrincipalMissAt &&
+    Date.now() - preferredGitpodPrincipalMissAt < PREFERRED_GITPOD_PRINCIPAL_MISS_COOLDOWN_MS
+  ) {
+    return null;
+  }
 
   const gitpodTabs = await chrome.tabs.query({ url: `${GITPOD_ORIGIN}/*` });
   for (const tab of gitpodTabs) {
@@ -293,6 +250,7 @@ async function resolvePreferredGitpodPrincipal() {
     }
   }
 
+  preferredGitpodPrincipalMissAt = Date.now();
   return null;
 }
 
@@ -311,10 +269,9 @@ async function findIssueForGitpodUrl(gitpodUrl) {
   if (!isGitpodDetailsUrl(gitpodUrl)) return null;
 
   const conversations = await getConversationCache();
-  const normalizedTarget = normalizeUrl(gitpodUrl);
 
   for (const [issueNumber, savedUrl] of Object.entries(conversations)) {
-    if (normalizeUrl(savedUrl) === normalizedTarget) {
+    if (areSameConversationUrl(savedUrl, gitpodUrl)) {
       return issueNumber;
     }
   }
@@ -539,36 +496,10 @@ async function handleGitpodLocationMessage(message, sender) {
 
   const existingSession = sender.documentId ? gitpodDocuments.get(sender.documentId) : null;
   const pendingCapture = getActivePendingConversationCapture();
-  const senderTabId = sender.tab?.id || null;
-  const normalizedMessageUrl = normalizeGitpodComparableUrl(message.url);
-  const normalizedReferrer = normalizeGitpodComparableUrl(message.referrer || "");
-  const normalizedExpectedFrameUrl = normalizeGitpodComparableUrl(panelRuntime.expectedFrameUrl);
-  const normalizedPendingCreateUrl = normalizeGitpodComparableUrl(pendingCapture?.createUrl || null);
-  const matchesExpectedFrameUrl =
-    Boolean(normalizedExpectedFrameUrl) &&
-    (normalizedMessageUrl === normalizedExpectedFrameUrl ||
-      normalizedReferrer === normalizedExpectedFrameUrl);
-  const markedPendingTab =
-    senderTabId && pendingCapture
-      ? maybeMarkPendingCaptureGitpodTab(senderTabId, message.url)
-      : false;
-  const matchesPendingTab =
-    Boolean(pendingCapture?.gitpodTabId) &&
-    senderTabId === pendingCapture.gitpodTabId;
-  const pendingCaptureMatches =
-    Boolean(pendingCapture) &&
-    shouldPersistConversationUrl(message.url) &&
-    (message.isPanelFrame ||
-      (!senderTabId && normalizedReferrer === normalizedPendingCreateUrl) ||
-      matchesPendingTab);
-  const isPanelFrame = Boolean(
-    message.isPanelFrame || existingSession?.isPanelFrame || matchesExpectedFrameUrl || pendingCaptureMatches,
-  );
+  const isPanelFrame = Boolean(message.isPanelFrame || existingSession?.isPanelFrame);
   const issueNumber =
     existingSession?.issueNumber ||
-    (matchesExpectedFrameUrl && panelRuntime.issueNumber) ||
-    pendingCapture?.issueNumber ||
-    panelRuntime.issueNumber ||
+    (isPanelFrame && (pendingCapture?.issueNumber || panelRuntime.issueNumber)) ||
     null;
   const session = {
     documentId: sender.documentId || null,
@@ -585,10 +516,6 @@ async function handleGitpodLocationMessage(message, sender) {
   }
 
   noteGitpodObservation(message.url, isPanelFrame ? "panel-frame" : "gitpod-message");
-
-  if (markedPendingTab) {
-    await broadcastSnapshot();
-  }
 
   if (!isPanelFrame) return;
 
@@ -732,7 +659,7 @@ async function handleStaleEnvironmentRequest(details) {
 
   const conversations = await getConversationCache();
   const savedUrl = conversations[issueNumber];
-  if (!savedUrl || normalizeUrl(savedUrl) !== normalizeUrl(expectedUrl)) return;
+  if (!savedUrl || !areSameConversationUrl(savedUrl, expectedUrl)) return;
 
   await clearConversationForIssue(issueNumber);
 
@@ -802,18 +729,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (!isExtensionDebugUrl(tab.url || "")) {
     lastNonExtensionTabId = tabId;
-  }
-
-  if ((changeInfo.url || changeInfo.status === "complete") && tab.url?.startsWith(GITPOD_ORIGIN)) {
-    const didMarkPendingTab = maybeMarkPendingCaptureGitpodTab(tabId, tab.url);
-    void maybePersistPendingConversationUrl(tab.url, "gitpod-tab", tabId).then((didPersist) => {
-      if (didMarkPendingTab || didPersist) {
-        void broadcastSnapshot();
-      }
-      if (didPersist) {
-        return;
-      }
-    });
   }
 
   if (changeInfo.url || changeInfo.status === "complete") {
