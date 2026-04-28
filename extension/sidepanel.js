@@ -1,6 +1,7 @@
 const GITPOD_ORIGIN = "https://app.gitpod.io";
 const PYLON_ORIGIN = "https://app.usepylon.com";
 const DEFAULT_REPO_URL = "https://github.com/gitpod-io/gitpod-next";
+const SIDE_PANEL_MARKER_QUERY_PARAM = "ona_side_panel";
 const searchParams = new URLSearchParams(window.location.search);
 const allowExtensionDebugFallback = searchParams.get("dev") === "1";
 
@@ -58,6 +59,7 @@ function buildPromptText(issueNumber, variant = "default") {
 function buildCreateConversationUrl(issueNumber, variant = "default") {
   const url = new URL(`${GITPOD_ORIGIN}/ai`);
   url.searchParams.set("p", buildPromptText(issueNumber, variant));
+  url.searchParams.set(SIDE_PANEL_MARKER_QUERY_PARAM, "1");
   if (snapshot?.preferredGitpodPrincipal) {
     url.searchParams.set("ona_target_principal", snapshot.preferredGitpodPrincipal);
   }
@@ -74,13 +76,28 @@ function normalizeUrl(urlString) {
 }
 
 function decorateGitpodUrl(urlString) {
-  if (!snapshot?.preferredGitpodPrincipal || !isGitpodUrl(urlString)) {
+  if (!isGitpodUrl(urlString)) {
     return urlString || null;
   }
 
   try {
     const url = new URL(urlString);
-    url.searchParams.set("ona_target_principal", snapshot.preferredGitpodPrincipal);
+    url.searchParams.set(SIDE_PANEL_MARKER_QUERY_PARAM, "1");
+    if (snapshot?.preferredGitpodPrincipal) {
+      url.searchParams.set("ona_target_principal", snapshot.preferredGitpodPrincipal);
+    }
+    return url.toString();
+  } catch {
+    return urlString || null;
+  }
+}
+
+function stripPanelOnlyGitpodParams(urlString) {
+  if (!isGitpodUrl(urlString)) return urlString || null;
+
+  try {
+    const url = new URL(urlString);
+    url.searchParams.delete(SIDE_PANEL_MARKER_QUERY_PARAM);
     return url.toString();
   } catch {
     return urlString || null;
@@ -422,7 +439,9 @@ function renderDebug(desiredState) {
 
 function getOpenTargetUrl(desiredState) {
   if (desiredState.visualState === "loading") {
-    return snapshot?.currentIframeUrl || desiredState.targetUrl || GITPOD_ORIGIN;
+    return stripPanelOnlyGitpodParams(
+      snapshot?.currentIframeUrl || desiredState.targetUrl || GITPOD_ORIGIN,
+    );
   }
 
   if (desiredState.visualState === "reverse") {
@@ -431,7 +450,7 @@ function getOpenTargetUrl(desiredState) {
 
   if (desiredState.issueNumber) {
     return (
-      decorateGitpodUrl(snapshot?.savedConversationUrl) ||
+      stripPanelOnlyGitpodParams(decorateGitpodUrl(snapshot?.savedConversationUrl)) ||
       desiredState.targetUrl ||
       buildCreateConversationUrl(desiredState.issueNumber)
     );

@@ -1,5 +1,6 @@
 const GITPOD_ORIGIN = "https://app.gitpod.io";
 const DEFAULT_REPO_URL = "https://github.com/gitpod-io/gitpod-next";
+const PROJECT_ENVIRONMENT_CLASSES_URL = `${GITPOD_ORIGIN}/api/gitpod.v1.ProjectService/ListProjectEnvironmentClasses`;
 const CONVERSATION_STORAGE_KEY = "issueConversationUrls";
 const PYLON_URL_STORAGE_KEY = "issuePylonUrls";
 const GITPOD_PRINCIPALS_STORAGE_KEY = "gitpodPrincipalsByOrg";
@@ -7,6 +8,7 @@ const PANEL_PORT_NAME = "sidepanel";
 const EXTENSION_ORIGIN = chrome.runtime.getURL("");
 const PENDING_CONVERSATION_CAPTURE_MS = 2 * 60 * 1000;
 const TARGET_GITPOD_ORG_NAME = "ona.com";
+const SIDE_PANEL_MARKER_QUERY_PARAM = "ona_side_panel";
 
 const panelPorts = new Set();
 const pylonContexts = new Map();
@@ -63,6 +65,15 @@ function isPylonAppUrl(urlString) {
   }
 }
 
+function isMarkedSidePanelGitpodUrl(urlString) {
+  try {
+    const url = new URL(urlString);
+    return url.origin === GITPOD_ORIGIN && url.searchParams.get(SIDE_PANEL_MARKER_QUERY_PARAM) === "1";
+  } catch {
+    return false;
+  }
+}
+
 function getIssueNumberFromUrl(urlString) {
   try {
     const url = new URL(urlString);
@@ -82,11 +93,6 @@ function buildPylonContext(urlString, source = "background") {
     source,
     updatedAt: Date.now(),
   };
-}
-
-function buildCreateConversationUrl(issueNumber) {
-  const prompt = encodeURIComponent(`/pylon ${issueNumber}`);
-  return `${GITPOD_ORIGIN}/ai?p=${prompt}#${DEFAULT_REPO_URL}`;
 }
 
 function canonicalizeConversationUrl(urlString) {
@@ -551,22 +557,45 @@ async function handleGitpodAccountContextMessage(message) {
   }
 }
 
-async function handleGitpodProjectEnvironmentClassesMessage(message, sender) {
-  if (!message?.isPanelFrame || !sender.documentId) return;
+async function handleMarkedGitpodPanelFrameNavigation(details) {
+  if (details.frameType && details.frameType !== "sub_frame") return;
+  if (!isMarkedSidePanelGitpodUrl(details.url)) return;
+
+  if (details.documentId) {
+    panelRuntime.gitpodDocumentId = details.documentId;
+  }
+  panelRuntime.currentIframeUrl = details.url;
+  panelRuntime.lastGitpodLocationUpdateAt = Date.now();
+
+  await broadcastSnapshot();
+}
+
+async function handleProjectEnvironmentClassesRequest(details) {
+  if (details.frameType && details.frameType !== "sub_frame") return;
+
+  const pendingCapture = getActivePendingConversationCapture();
+  const matchesKnownPanelDocument =
+    Boolean(panelRuntime.gitpodDocumentId) &&
+    (!details.documentId || details.documentId === panelRuntime.gitpodDocumentId);
+  const canAdoptPendingPanelDocument =
+    !panelRuntime.gitpodDocumentId && Boolean(pendingCapture) && Boolean(details.documentId);
+
+  if (!matchesKnownPanelDocument && !canAdoptPendingPanelDocument) return;
 
   const event = {
-    url: message.requestUrl || null,
-    frameUrl: message.frameUrl || null,
-    documentId: sender.documentId,
-    source: message.source || null,
+    url: details.url,
+    frameUrl: panelRuntime.currentIframeUrl,
+    documentId: details.documentId || panelRuntime.gitpodDocumentId || null,
+    source: "webRequest",
     timestamp: Date.now(),
   };
 
-  if (!panelRuntime.gitpodDocumentId || panelRuntime.gitpodDocumentId === sender.documentId) {
-    panelRuntime.gitpodDocumentId = sender.documentId;
-    panelRuntime.lastProjectEnvironmentClassesEvent = event;
-    await broadcastSnapshot();
+  if (details.documentId) {
+    panelRuntime.gitpodDocumentId = details.documentId;
   }
+  panelRuntime.lastProjectEnvironmentClassesEvent = event;
+
+  await broadcastSnapshot();
 }
 
 async function handleEnvironmentDeletedFromPanel(message) {
@@ -708,9 +737,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case "GITPOD_ACCOUNT_CONTEXT":
         await handleGitpodAccountContextMessage(message);
         return { ok: true };
-      case "GITPOD_PROJECT_ENVIRONMENT_CLASSES":
-        await handleGitpodProjectEnvironmentClassesMessage(message, sender);
-        return { ok: true };
       case "ENSURE_ONA_AI_TAG_FOR_ACTIVE_ISSUE":
         return await ensureOnaAiTagForActiveIssue();
       default:
@@ -803,6 +829,26 @@ chrome.webRequest.onCompleted.addListener(
   },
   {
     urls: [`${GITPOD_ORIGIN}/api/gitpod.v1.EnvironmentService/GetEnvironment`],
+    types: ["xmlhttprequest"],
+  },
+);
+
+chrome.webRequest.onCompleted.addListener(
+  (details) => {
+    void handleMarkedGitpodPanelFrameNavigation(details);
+  },
+  {
+    urls: [`${GITPOD_ORIGIN}/*`],
+    types: ["sub_frame"],
+  },
+);
+
+chrome.webRequest.onBeforeRequest.addListener(
+  (details) => {
+    void handleProjectEnvironmentClassesRequest(details);
+  },
+  {
+    urls: [PROJECT_ENVIRONMENT_CLASSES_URL],
     types: ["xmlhttprequest"],
   },
 );

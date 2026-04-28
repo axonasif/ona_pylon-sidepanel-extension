@@ -4,24 +4,37 @@
 (function () {
   const EXTENSION_ORIGIN = new URL(chrome.runtime.getURL("")).origin;
   const TARGET_PRINCIPAL_QUERY_PARAM = "ona_target_principal";
-  const PAGE_BRIDGE_EVENT = "ona-pylon-extension:gitpod-project-environment-classes";
-  const IS_PANEL_FRAME =
-    window.parent !== window &&
-    (window.name === "ona-side-panel-frame" ||
-      document.referrer.startsWith(chrome.runtime.getURL("")));
+  const SIDE_PANEL_MARKER_QUERY_PARAM = "ona_side_panel";
+  const IS_GITPOD_SUBFRAME = window.parent !== window;
   const bootstrapUrl = new URL(window.location.href);
   const bootstrapPrincipal = bootstrapUrl.searchParams.get(TARGET_PRINCIPAL_QUERY_PARAM);
+  const hasSidePanelMarker = bootstrapUrl.searchParams.get(SIDE_PANEL_MARKER_QUERY_PARAM) === "1";
 
-  if (bootstrapPrincipal) {
+  function isExtensionManagedFrame() {
+    if (hasSidePanelMarker) return true;
+
+    // Chrome can expose frame name/referrer later than document_start in side-panel iframes.
+    // Top-level Gitpod tabs must remain false so normal browsing cannot mutate Pylon mappings.
+    return (
+      IS_GITPOD_SUBFRAME &&
+      (window.name === "ona-side-panel-frame" ||
+        document.referrer.startsWith(chrome.runtime.getURL("")))
+    );
+  }
+
+  if (bootstrapPrincipal || hasSidePanelMarker) {
     try {
-      localStorage.setItem("principal", bootstrapPrincipal);
-      sessionStorage.setItem("principal", bootstrapPrincipal);
+      if (bootstrapPrincipal) {
+        localStorage.setItem("principal", bootstrapPrincipal);
+        sessionStorage.setItem("principal", bootstrapPrincipal);
+      }
       bootstrapUrl.searchParams.delete(TARGET_PRINCIPAL_QUERY_PARAM);
+      bootstrapUrl.searchParams.delete(SIDE_PANEL_MARKER_QUERY_PARAM);
       history.replaceState(null, "", bootstrapUrl.toString());
     } catch {}
   }
 
-  if (IS_PANEL_FRAME) {
+  if (isExtensionManagedFrame()) {
     if (!document.querySelector("style[data-ona-panel]")) {
       const style = document.createElement("style");
       style.setAttribute("data-ona-panel", "true");
@@ -40,8 +53,6 @@
   }
 
   let lastReportedUrl = null;
-  let didReportBootstrapReady = false;
-
   function getCurrentPrincipal() {
     try {
       return localStorage.getItem("principal") || sessionStorage.getItem("principal") || null;
@@ -64,7 +75,7 @@
       type: "GITPOD_LOCATION",
       url: currentUrl,
       referrer: document.referrer,
-      isPanelFrame: IS_PANEL_FRAME,
+      isPanelFrame: isExtensionManagedFrame(),
       principal: getCurrentPrincipal(),
     });
   }
@@ -91,26 +102,6 @@
 
   installLocationObserver();
   reportLocation();
-
-  function reportBootstrapReady(requestUrl, source = "bridge") {
-    if (!IS_PANEL_FRAME || didReportBootstrapReady || !requestUrl) return;
-
-    didReportBootstrapReady = true;
-    chrome.runtime.sendMessage({
-      type: "GITPOD_PROJECT_ENVIRONMENT_CLASSES",
-      isPanelFrame: true,
-      requestUrl,
-      frameUrl: window.location.href,
-      source,
-    });
-  }
-
-  window.addEventListener("message", (event) => {
-    if (event.source !== window) return;
-    const data = event.data;
-    if (!data || data.type !== PAGE_BRIDGE_EVENT) return;
-    reportBootstrapReady(data.requestUrl, data.source || "bridge");
-  });
 
   async function fetchAccountContext() {
     const principal = getCurrentPrincipal();
