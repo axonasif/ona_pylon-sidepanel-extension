@@ -1,6 +1,7 @@
 const GITPOD_ORIGIN = "https://app.gitpod.io";
 const PYLON_ORIGIN = "https://app.usepylon.com";
 const DEFAULT_REPO_URL = "https://github.com/gitpod-io/gitpod-next";
+const TARGET_GITPOD_ORG_NAME = "ona.com";
 const SIDE_PANEL_MARKER_QUERY_PARAM = "ona_side_panel";
 const searchParams = new URLSearchParams(window.location.search);
 const allowExtensionDebugFallback = searchParams.get("dev") === "1";
@@ -34,6 +35,7 @@ let loadingTimer = null;
 const localState = {
   pendingCreateIssue: null,
   pendingCreateTargetUrl: null,
+  pendingOrgBootstrap: null,
   currentFrameSrc: null,
   lastLoadedFrameUrl: null,
   lastActiveIssueNumber: null,
@@ -42,6 +44,9 @@ const localState = {
   tagSyncInFlightForIssue: null,
   noticeTimer: null,
   createBootstrapFallbackTimer: null,
+  orgBootstrapTimer: null,
+  orgCheckFailedIssue: null,
+  lastPrincipalWarningSignature: null,
   deleteArmed: false,
   deleteArmedTimer: null,
   deleteInFlight: false,
@@ -64,6 +69,12 @@ function buildCreateConversationUrl(issueNumber, variant = "default") {
     url.searchParams.set("ona_target_principal", snapshot.preferredGitpodPrincipal);
   }
   url.hash = DEFAULT_REPO_URL;
+  return url.toString();
+}
+
+function buildGitpodOrgBootstrapUrl() {
+  const url = new URL(GITPOD_ORIGIN);
+  url.searchParams.set(SIDE_PANEL_MARKER_QUERY_PARAM, "1");
   return url.toString();
 }
 
@@ -141,6 +152,74 @@ function stopLoading() {
     localState.createBootstrapFallbackTimer = null;
   }
   localState.currentLoadingReason = null;
+}
+
+function clearOrgBootstrap() {
+  if (localState.orgBootstrapTimer) {
+    window.clearTimeout(localState.orgBootstrapTimer);
+    localState.orgBootstrapTimer = null;
+  }
+  localState.pendingOrgBootstrap = null;
+}
+
+function startTagSync(issueNumber) {
+  if (localState.tagSyncInFlightForIssue === issueNumber) {
+    return;
+  }
+
+  localState.tagSyncInFlightForIssue = issueNumber;
+  chrome.runtime
+    .sendMessage({
+      type: "ENSURE_ONA_AI_TAG_FOR_ACTIVE_ISSUE",
+    })
+    .then((response) => {
+      if (response?.ok) return;
+      throw new Error(response?.error || "ensure-ona-ai-tag-failed");
+    })
+    .catch((error) => {
+      if (snapshot?.activeIssueNumber !== issueNumber) return;
+      showNotice(
+        `Couldn't add the "ona_ai" tag automatically. Please add it manually in Pylon if needed. (${error?.message || error})`,
+      );
+    })
+    .finally(() => {
+      if (localState.tagSyncInFlightForIssue === issueNumber) {
+        localState.tagSyncInFlightForIssue = null;
+      }
+    });
+}
+
+function startCreateForIssue(issueNumber, variant = "default") {
+  stopLoading();
+  clearOrgBootstrap();
+  localState.orgCheckFailedIssue = null;
+  localState.pendingCreateIssue = issueNumber;
+  localState.pendingCreateTargetUrl = buildCreateConversationUrl(issueNumber, variant);
+  localState.lastReportedFrameSignature = null;
+  startTagSync(issueNumber);
+}
+
+function startOrgBootstrap(issueNumber, variant = "default") {
+  clearOrgBootstrap();
+  localState.pendingCreateIssue = null;
+  localState.pendingCreateTargetUrl = null;
+  localState.orgCheckFailedIssue = null;
+  localState.pendingOrgBootstrap = {
+    issueNumber,
+    variant,
+    startedAt: Date.now(),
+  };
+  localState.lastReportedFrameSignature = null;
+  localState.orgBootstrapTimer = window.setTimeout(() => {
+    if (localState.pendingOrgBootstrap?.issueNumber !== issueNumber) return;
+    localState.orgCheckFailedIssue = issueNumber;
+    clearOrgBootstrap();
+    showNotice(
+      `Couldn't verify access to the ${TARGET_GITPOD_ORG_NAME} Gitpod organization. Please make sure you're signed into Gitpod and have access to ${TARGET_GITPOD_ORG_NAME}.`,
+      12000,
+    );
+    render();
+  }, 12000);
 }
 
 function showFrameControls() {
@@ -277,10 +356,10 @@ function clearFrame() {
 }
 
 function hasCreateReadySignal() {
-  return Boolean(
-    snapshot?.gitpodDocumentId &&
-      snapshot?.lastProjectEnvironmentClassesEvent?.documentId === snapshot.gitpodDocumentId,
-  );
+  const event = snapshot?.lastProjectEnvironmentClassesEvent;
+  if (!event) return false;
+  if (!snapshot?.gitpodDocumentId || !event.documentId) return true;
+  return event.documentId === snapshot.gitpodDocumentId;
 }
 
 function isFrameLoadedForCurrentSrc() {
@@ -335,6 +414,26 @@ function getDesiredState() {
 
   if (!issueNumber) {
     return { visualState: "no-issue", issueNumber: null, targetUrl: null };
+  }
+
+  if (localState.orgCheckFailedIssue === issueNumber && !snapshot.preferredGitpodPrincipal) {
+    return {
+      visualState: "org-warning",
+      issueNumber,
+      targetUrl: null,
+    };
+  }
+
+  if (
+    localState.pendingOrgBootstrap?.issueNumber === issueNumber &&
+    !snapshot.preferredGitpodPrincipal
+  ) {
+    return {
+      visualState: "org-bootstrap",
+      issueNumber,
+      targetUrl: buildGitpodOrgBootstrapUrl(),
+      reason: "org-check",
+    };
   }
 
   if (snapshot.savedConversationUrl) {
@@ -420,6 +519,11 @@ function renderDebug(desiredState) {
     activeIssueNumber: snapshot?.activeIssueNumber || null,
     savedConversationUrl: snapshot?.savedConversationUrl || null,
     preferredGitpodPrincipal: snapshot?.preferredGitpodPrincipal || null,
+    targetGitpodOrgName: snapshot?.targetGitpodOrgName || TARGET_GITPOD_ORG_NAME,
+    targetGitpodOrgAvailable: snapshot?.targetGitpodOrgAvailable ?? null,
+    lastGitpodAccountContextAt: snapshot?.lastGitpodAccountContextAt || null,
+    gitpodPrincipal: snapshot?.gitpodPrincipal || null,
+    gitpodPrincipalMatchesPreferred: snapshot?.gitpodPrincipalMatchesPreferred ?? null,
     currentIframeUrl: snapshot?.currentIframeUrl || null,
     currentFrameSrc: localState.currentFrameSrc,
     expectedFrameUrl: snapshot?.expectedFrameUrl || null,
@@ -459,6 +563,26 @@ function getOpenTargetUrl(desiredState) {
   return GITPOD_ORIGIN;
 }
 
+function maybeShowPrincipalWarning(desiredState) {
+  if (
+    desiredState.visualState !== "loading" ||
+    !snapshot?.preferredGitpodPrincipal ||
+    !snapshot?.gitpodPrincipal ||
+    snapshot.gitpodPrincipalMatchesPreferred !== false
+  ) {
+    return;
+  }
+
+  const signature = `${snapshot.preferredGitpodPrincipal}:${snapshot.gitpodPrincipal}:${desiredState.issueNumber || ""}`;
+  if (localState.lastPrincipalWarningSignature === signature) return;
+
+  localState.lastPrincipalWarningSignature = signature;
+  showNotice(
+    `Gitpod appears to be using a different organization than ${TARGET_GITPOD_ORG_NAME}. If Ona behaves unexpectedly, switch Gitpod to ${TARGET_GITPOD_ORG_NAME} and reload this panel.`,
+    15000,
+  );
+}
+
 function render() {
   const desiredState = getDesiredState();
 
@@ -469,7 +593,10 @@ function render() {
     ) {
       localState.pendingCreateIssue = null;
       localState.pendingCreateTargetUrl = null;
+      clearOrgBootstrap();
+      localState.orgCheckFailedIssue = null;
       localState.tagSyncInFlightForIssue = null;
+      localState.lastPrincipalWarningSignature = null;
       localState.lastReportedFrameSignature = null;
     }
     localState.lastActiveIssueNumber = desiredState.issueNumber;
@@ -533,6 +660,43 @@ function render() {
       reportVisualState("create", desiredState.issueNumber, null);
       break;
     }
+    case "org-warning": {
+      clearFrame();
+      showStatusView({
+        tone: "danger",
+        eyebrow: "Check Gitpod access",
+        title: `Couldn't verify ${TARGET_GITPOD_ORG_NAME}`,
+        body: `The extension could not confirm that this Gitpod account has access to the ${TARGET_GITPOD_ORG_NAME} organization, so it did not create an environment in the wrong org.`,
+        meta: "Make sure you're signed into Gitpod with the right account, then retry.",
+        actionLabel: "Retry organization check",
+      });
+      reportVisualState("org-warning", desiredState.issueNumber, null);
+      break;
+    }
+    case "org-bootstrap": {
+      statusView.classList.add("hidden");
+      frameShell.classList.remove("hidden");
+
+      if (normalizeUrl(localState.currentFrameSrc) !== normalizeUrl(desiredState.targetUrl)) {
+        localState.lastLoadedFrameUrl = null;
+        frame.src = desiredState.targetUrl;
+        localState.currentFrameSrc = desiredState.targetUrl;
+        startLoading(`Checking ${TARGET_GITPOD_ORG_NAME} access…`, "org-check");
+      }
+
+      reportFrameTarget({
+        visualState: "org-bootstrap",
+        issueNumber: desiredState.issueNumber,
+        url: desiredState.targetUrl,
+        reason: desiredState.reason,
+      });
+      reportVisualState(
+        "org-bootstrap",
+        desiredState.issueNumber,
+        snapshot?.currentIframeUrl || localState.currentFrameSrc,
+      );
+      break;
+    }
     case "stale-env": {
       clearFrame();
       showStatusView({
@@ -593,12 +757,15 @@ function render() {
   if (desiredState.visualState === "loading") {
     maybeFinishCreateLoading();
   }
+  maybeShowPrincipalWarning(desiredState);
 }
 
 frame.addEventListener("load", () => {
   localState.lastLoadedFrameUrl = frame.src;
   localState.currentFrameSrc = frame.src;
-  if (localState.currentLoadingReason === "create" && !hasCreateReadySignal()) {
+  if (localState.currentLoadingReason === "org-check") {
+    hideFrameControls();
+  } else if (localState.currentLoadingReason === "create" && !hasCreateReadySignal()) {
     hideFrameControls();
   } else if (!maybeFinishCreateLoading()) {
     stopLoading();
@@ -632,35 +799,14 @@ function startCreateFlow(variant = "default") {
     hideNotice();
     render();
 
-    localState.pendingCreateIssue = issueNumber;
-    localState.pendingCreateTargetUrl = buildCreateConversationUrl(issueNumber, variant);
-    localState.lastReportedFrameSignature = null;
-    render();
-
-    if (localState.tagSyncInFlightForIssue === issueNumber) {
+    if (!snapshot?.preferredGitpodPrincipal) {
+      startOrgBootstrap(issueNumber, variant);
+      render();
       return;
     }
 
-    localState.tagSyncInFlightForIssue = issueNumber;
-    chrome.runtime
-      .sendMessage({
-        type: "ENSURE_ONA_AI_TAG_FOR_ACTIVE_ISSUE",
-      })
-      .then((response) => {
-        if (response?.ok) return;
-        throw new Error(response?.error || "ensure-ona-ai-tag-failed");
-      })
-      .catch((error) => {
-        if (snapshot?.activeIssueNumber !== issueNumber) return;
-        showNotice(
-          `Couldn't add the "ona_ai" tag automatically. Please add it manually in Pylon if needed. (${error?.message || error})`,
-        );
-      })
-      .finally(() => {
-        if (localState.tagSyncInFlightForIssue === issueNumber) {
-          localState.tagSyncInFlightForIssue = null;
-        }
-      });
+    startCreateForIssue(issueNumber, variant);
+    render();
   })();
 }
 
@@ -822,6 +968,28 @@ function connectToBackground() {
     if (snapshot?.savedConversationUrl) {
       localState.pendingCreateIssue = null;
       localState.pendingCreateTargetUrl = null;
+      clearOrgBootstrap();
+    }
+
+    const pendingOrgBootstrap = localState.pendingOrgBootstrap;
+    if (
+      pendingOrgBootstrap &&
+      snapshot?.activeIssueNumber === pendingOrgBootstrap.issueNumber
+    ) {
+      if (snapshot.preferredGitpodPrincipal) {
+        startCreateForIssue(pendingOrgBootstrap.issueNumber, pendingOrgBootstrap.variant);
+      } else if (
+        snapshot.targetGitpodOrgAvailable === false &&
+        snapshot.lastGitpodAccountContextAt &&
+        snapshot.lastGitpodAccountContextAt >= pendingOrgBootstrap.startedAt
+      ) {
+        localState.orgCheckFailedIssue = pendingOrgBootstrap.issueNumber;
+        clearOrgBootstrap();
+        showNotice(
+          `This Gitpod account does not appear to have access to ${TARGET_GITPOD_ORG_NAME}. The extension did not create an environment in another organization.`,
+          15000,
+        );
+      }
     }
     render();
   });

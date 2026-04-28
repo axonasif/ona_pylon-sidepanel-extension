@@ -32,6 +32,8 @@ const panelRuntime = {
   lastGitpodLocationUpdateAt: null,
   gitpodDocumentId: null,
   gitpodPrincipal: null,
+  targetGitpodOrgAvailable: null,
+  lastGitpodAccountContextAt: null,
   lastProjectEnvironmentClassesEvent: null,
 };
 
@@ -115,6 +117,11 @@ function areSameConversationUrl(leftUrlString, rightUrlString) {
 
 function normalizeOrgName(name) {
   return (name || "").trim().toLowerCase();
+}
+
+function normalizeGitpodPrincipal(principal) {
+  if (!principal) return null;
+  return principal.startsWith("user/") ? principal.slice("user/".length) : principal;
 }
 
 function isValidConversationUrl(urlString) {
@@ -227,7 +234,11 @@ async function mergeGitpodPrincipals(entries) {
 async function resolvePreferredGitpodPrincipal() {
   const cache = await getGitpodPrincipalsCache();
   const preferredOrgKey = normalizeOrgName(TARGET_GITPOD_ORG_NAME);
-  if (cache[preferredOrgKey]) return cache[preferredOrgKey];
+  if (cache[preferredOrgKey]) {
+    panelRuntime.targetGitpodOrgAvailable = true;
+    preferredGitpodPrincipalMissAt = 0;
+    return cache[preferredOrgKey];
+  }
   if (
     preferredGitpodPrincipalMissAt &&
     Date.now() - preferredGitpodPrincipalMissAt < PREFERRED_GITPOD_PRINCIPAL_MISS_COOLDOWN_MS
@@ -250,7 +261,11 @@ async function resolvePreferredGitpodPrincipal() {
           .map((membership) => [normalizeOrgName(membership.organizationName), membership.userId]),
       );
       await mergeGitpodPrincipals(entries);
-      if (entries[preferredOrgKey]) return entries[preferredOrgKey];
+      if (entries[preferredOrgKey]) {
+        panelRuntime.targetGitpodOrgAvailable = true;
+        preferredGitpodPrincipalMissAt = 0;
+        return entries[preferredOrgKey];
+      }
     } catch {
       // Tab may not have the Gitpod content script available yet.
     }
@@ -402,6 +417,11 @@ async function buildSnapshot() {
   const activeContext = await getActivePylonContext();
   const conversations = await getConversationCache();
   const preferredGitpodPrincipal = await resolvePreferredGitpodPrincipal();
+  const gitpodPrincipalMatchesPreferred =
+    preferredGitpodPrincipal && panelRuntime.gitpodPrincipal
+      ? normalizeGitpodPrincipal(preferredGitpodPrincipal) ===
+        normalizeGitpodPrincipal(panelRuntime.gitpodPrincipal)
+      : null;
   const activeIssueNumber = activeContext?.issueNumber || null;
   const activeTabUrl = activeTab?.url ?? null;
 
@@ -438,6 +458,10 @@ async function buildSnapshot() {
     lastGitpodLocationUpdateAt: panelRuntime.lastGitpodLocationUpdateAt,
     gitpodDocumentId: panelRuntime.gitpodDocumentId,
     gitpodPrincipal: panelRuntime.gitpodPrincipal,
+    gitpodPrincipalMatchesPreferred,
+    targetGitpodOrgName: TARGET_GITPOD_ORG_NAME,
+    targetGitpodOrgAvailable: panelRuntime.targetGitpodOrgAvailable,
+    lastGitpodAccountContextAt: panelRuntime.lastGitpodAccountContextAt,
     lastProjectEnvironmentClassesEvent: panelRuntime.lastProjectEnvironmentClassesEvent,
   };
 }
@@ -546,13 +570,20 @@ async function handleGitpodLocationMessage(message, sender) {
 
 async function handleGitpodAccountContextMessage(message) {
   const memberships = message.context?.memberships || [];
+  const preferredOrgKey = normalizeOrgName(TARGET_GITPOD_ORG_NAME);
   const entries = Object.fromEntries(
     memberships
       .filter((membership) => membership?.organizationName && membership?.userId)
       .map((membership) => [normalizeOrgName(membership.organizationName), membership.userId]),
   );
+  const previousTargetOrgAvailable = panelRuntime.targetGitpodOrgAvailable;
+  panelRuntime.lastGitpodAccountContextAt = Date.now();
+  panelRuntime.targetGitpodOrgAvailable = Boolean(entries[preferredOrgKey]);
+  if (entries[preferredOrgKey]) {
+    preferredGitpodPrincipalMissAt = 0;
+  }
   const didChange = await mergeGitpodPrincipals(entries);
-  if (didChange) {
+  if (didChange || previousTargetOrgAvailable !== panelRuntime.targetGitpodOrgAvailable) {
     await broadcastSnapshot();
   }
 }
@@ -579,8 +610,14 @@ async function handleProjectEnvironmentClassesRequest(details) {
     (!details.documentId || details.documentId === panelRuntime.gitpodDocumentId);
   const canAdoptPendingPanelDocument =
     !panelRuntime.gitpodDocumentId && Boolean(pendingCapture) && Boolean(details.documentId);
+  const matchesPendingPanelFrame =
+    Boolean(pendingCapture) &&
+    Boolean(panelRuntime.currentIframeUrl) &&
+    panelRuntime.currentIframeUrl.startsWith(`${GITPOD_ORIGIN}/`);
 
-  if (!matchesKnownPanelDocument && !canAdoptPendingPanelDocument) return;
+  if (!matchesKnownPanelDocument && !canAdoptPendingPanelDocument && !matchesPendingPanelFrame) {
+    return;
+  }
 
   const event = {
     url: details.url,
@@ -864,6 +901,7 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
       if (header.name.toLowerCase() === "x-gitpod-principal" && header.value) {
         if (panelRuntime.gitpodPrincipal !== header.value) {
           panelRuntime.gitpodPrincipal = header.value;
+          void broadcastSnapshot();
         }
         return;
       }

@@ -14,6 +14,14 @@
     return /^\d+$/.test(issueNumber || "") ? issueNumber : null;
   }
 
+  function isSupportedPylonRoute() {
+    return (
+      window.location.pathname === "/issues" ||
+      window.location.pathname.startsWith("/issues/") ||
+      window.location.pathname.startsWith("/support/issues/")
+    );
+  }
+
   function getContext() {
     return {
       url: window.location.href,
@@ -30,7 +38,12 @@
 
   function ensureButton() {
     if (!document.body) return;
-    if (document.getElementById(BUTTON_ID)) return;
+    const existingButton = document.getElementById(BUTTON_ID);
+    if (!isSupportedPylonRoute()) {
+      existingButton?.remove();
+      return;
+    }
+    if (existingButton) return;
 
     const button = document.createElement("button");
     button.id = BUTTON_ID;
