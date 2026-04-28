@@ -34,14 +34,17 @@ const localState = {
   pendingCreateIssue: null,
   pendingCreateTargetUrl: null,
   currentFrameSrc: null,
+  lastLoadedFrameUrl: null,
   lastActiveIssueNumber: null,
   lastReportedVisualSignature: null,
   lastReportedFrameSignature: null,
   tagSyncInFlightForIssue: null,
   noticeTimer: null,
+  createBootstrapFallbackTimer: null,
   deleteArmed: false,
   deleteArmedTimer: null,
   deleteInFlight: false,
+  currentLoadingReason: null,
 };
 
 function buildPromptText(issueNumber, variant = "default") {
@@ -84,10 +87,26 @@ function decorateGitpodUrl(urlString) {
   }
 }
 
-function startLoading(message) {
+function startLoading(message, reason = "generic") {
   loading.classList.remove("hidden");
   loadingText.textContent = message;
   hideFrameControls();
+  localState.currentLoadingReason = reason;
+  if (localState.createBootstrapFallbackTimer) {
+    window.clearTimeout(localState.createBootstrapFallbackTimer);
+    localState.createBootstrapFallbackTimer = null;
+  }
+
+  if (reason === "create") {
+    localState.createBootstrapFallbackTimer = window.setTimeout(() => {
+      if (localState.currentLoadingReason !== "create") return;
+      if (!isFrameLoadedForCurrentSrc()) return;
+      stopLoading();
+      if (isGitpodUrl(frame.src)) {
+        showFrameControls();
+      }
+    }, 15000);
+  }
 
   window.clearTimeout(loadingTimer);
   loadingTimer = window.setTimeout(() => {
@@ -100,6 +119,11 @@ function startLoading(message) {
 function stopLoading() {
   loading.classList.add("hidden");
   window.clearTimeout(loadingTimer);
+  if (localState.createBootstrapFallbackTimer) {
+    window.clearTimeout(localState.createBootstrapFallbackTimer);
+    localState.createBootstrapFallbackTimer = null;
+  }
+  localState.currentLoadingReason = null;
 }
 
 function showFrameControls() {
@@ -230,8 +254,36 @@ function clearFrame() {
   }
 
   localState.currentFrameSrc = null;
+  localState.lastLoadedFrameUrl = null;
   stopLoading();
   hideFrameControls();
+}
+
+function hasCreateReadySignal() {
+  return Boolean(
+    snapshot?.gitpodDocumentId &&
+      snapshot?.lastProjectEnvironmentClassesEvent?.documentId === snapshot.gitpodDocumentId,
+  );
+}
+
+function isFrameLoadedForCurrentSrc() {
+  return normalizeUrl(localState.lastLoadedFrameUrl) === normalizeUrl(frame.src);
+}
+
+function maybeFinishCreateLoading() {
+  if (
+    localState.currentLoadingReason !== "create" ||
+    !hasCreateReadySignal() ||
+    !isFrameLoadedForCurrentSrc()
+  ) {
+    return false;
+  }
+
+  stopLoading();
+  if (isGitpodUrl(frame.src)) {
+    showFrameControls();
+  }
+  return true;
 }
 
 function getDesiredState() {
@@ -362,6 +414,7 @@ function renderDebug(desiredState) {
     lastPylonContextUpdateAt: snapshot?.lastPylonContextUpdateAt || null,
     lastGitpodLocationUpdateAt: snapshot?.lastGitpodLocationUpdateAt || null,
     gitpodDocumentId: snapshot?.gitpodDocumentId || null,
+    lastProjectEnvironmentClassesEvent: snapshot?.lastProjectEnvironmentClassesEvent || null,
   };
 
   debugJson.textContent = JSON.stringify(debugState, null, 2);
@@ -480,12 +533,14 @@ function render() {
       frameShell.classList.remove("hidden");
 
       if (normalizeUrl(localState.currentFrameSrc) !== normalizeUrl(desiredState.targetUrl)) {
+        localState.lastLoadedFrameUrl = null;
         frame.src = desiredState.targetUrl;
         localState.currentFrameSrc = desiredState.targetUrl;
         startLoading(
           desiredState.reason === "saved"
             ? "Loading the saved Ona conversation…"
             : "Creating a fresh Ona conversation…",
+          desiredState.reason === "saved" ? "saved" : "create",
         );
       }
 
@@ -516,15 +571,23 @@ function render() {
 
   renderDebug(desiredState);
   updateDeleteButtonState();
+  if (desiredState.visualState === "loading") {
+    maybeFinishCreateLoading();
+  }
 }
 
 frame.addEventListener("load", () => {
+  localState.lastLoadedFrameUrl = frame.src;
   localState.currentFrameSrc = frame.src;
-  stopLoading();
-  if (isGitpodUrl(frame.src)) {
-    showFrameControls();
-  } else {
+  if (localState.currentLoadingReason === "create" && !hasCreateReadySignal()) {
     hideFrameControls();
+  } else if (!maybeFinishCreateLoading()) {
+    stopLoading();
+    if (isGitpodUrl(frame.src)) {
+      showFrameControls();
+    } else {
+      hideFrameControls();
+    }
   }
   updateDeleteButtonState();
   renderDebug(getDesiredState());
@@ -594,6 +657,7 @@ reloadButton.addEventListener("click", () => {
   if (frame.src === "about:blank") return;
 
   startLoading("Reloading Ona…");
+  localState.lastLoadedFrameUrl = null;
   frame.src = frame.src;
 });
 
@@ -667,7 +731,7 @@ deleteButton.addEventListener("click", async () => {
   disarmDelete();
   localState.deleteInFlight = true;
   updateDeleteButtonState();
-  startLoading("Deleting Ona environment…");
+  startLoading("Deleting Ona environment…", "delete");
   showNotice("Deleting environment…", 12000);
 
   try {

@@ -4,6 +4,7 @@
 (function () {
   const EXTENSION_ORIGIN = new URL(chrome.runtime.getURL("")).origin;
   const TARGET_PRINCIPAL_QUERY_PARAM = "ona_target_principal";
+  const PAGE_BRIDGE_EVENT = "ona-pylon-extension:gitpod-project-environment-classes";
   const IS_PANEL_FRAME =
     window.parent !== window &&
     (window.name === "ona-side-panel-frame" ||
@@ -39,6 +40,7 @@
   }
 
   let lastReportedUrl = null;
+  let didReportBootstrapReady = false;
 
   function getCurrentPrincipal() {
     try {
@@ -89,6 +91,26 @@
 
   installLocationObserver();
   reportLocation();
+
+  function reportBootstrapReady(requestUrl, source = "bridge") {
+    if (!IS_PANEL_FRAME || didReportBootstrapReady || !requestUrl) return;
+
+    didReportBootstrapReady = true;
+    chrome.runtime.sendMessage({
+      type: "GITPOD_PROJECT_ENVIRONMENT_CLASSES",
+      isPanelFrame: true,
+      requestUrl,
+      frameUrl: window.location.href,
+      source,
+    });
+  }
+
+  window.addEventListener("message", (event) => {
+    if (event.source !== window) return;
+    const data = event.data;
+    if (!data || data.type !== PAGE_BRIDGE_EVENT) return;
+    reportBootstrapReady(data.requestUrl, data.source || "bridge");
+  });
 
   async function fetchAccountContext() {
     const principal = getCurrentPrincipal();

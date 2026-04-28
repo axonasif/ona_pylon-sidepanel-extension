@@ -35,6 +35,13 @@
       "js": ["gitpod-content.js"],
       "run_at": "document_start",
       "all_frames": true
+    },
+    {
+      "matches": ["https://app.gitpod.io/*"],
+      "js": ["gitpod-main-world.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
     }
   ],
   "web_accessible_resources": [

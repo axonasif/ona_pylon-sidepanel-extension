@@ -30,6 +30,7 @@ const panelRuntime = {
   lastGitpodLocationUpdateAt: null,
   gitpodDocumentId: null,
   gitpodPrincipal: null,
+  lastProjectEnvironmentClassesEvent: null,
 };
 
 let conversationCache = null;
@@ -474,6 +475,7 @@ async function buildSnapshot() {
     lastGitpodLocationUpdateAt: panelRuntime.lastGitpodLocationUpdateAt,
     gitpodDocumentId: panelRuntime.gitpodDocumentId,
     gitpodPrincipal: panelRuntime.gitpodPrincipal,
+    lastProjectEnvironmentClassesEvent: panelRuntime.lastProjectEnvironmentClassesEvent,
   };
 }
 
@@ -593,6 +595,7 @@ async function handleGitpodLocationMessage(message, sender) {
   panelRuntime.currentIframeUrl = message.url;
   if (sender.documentId && sender.documentId !== panelRuntime.gitpodDocumentId) {
     panelRuntime.gitpodPrincipal = null;
+    panelRuntime.lastProjectEnvironmentClassesEvent = null;
   }
   panelRuntime.gitpodDocumentId = sender.documentId || panelRuntime.gitpodDocumentId;
   if (message.principal) {
@@ -617,6 +620,24 @@ async function handleGitpodAccountContextMessage(message) {
   );
   const didChange = await mergeGitpodPrincipals(entries);
   if (didChange) {
+    await broadcastSnapshot();
+  }
+}
+
+async function handleGitpodProjectEnvironmentClassesMessage(message, sender) {
+  if (!message?.isPanelFrame || !sender.documentId) return;
+
+  const event = {
+    url: message.requestUrl || null,
+    frameUrl: message.frameUrl || null,
+    documentId: sender.documentId,
+    source: message.source || null,
+    timestamp: Date.now(),
+  };
+
+  if (!panelRuntime.gitpodDocumentId || panelRuntime.gitpodDocumentId === sender.documentId) {
+    panelRuntime.gitpodDocumentId = sender.documentId;
+    panelRuntime.lastProjectEnvironmentClassesEvent = event;
     await broadcastSnapshot();
   }
 }
@@ -684,6 +705,7 @@ async function handlePortMessage(port, message) {
       if (message.reason === "create") {
         panelRuntime.lastCreateUrl = message.url || null;
         beginPendingConversationCapture(message.issueNumber || null, message.url || null);
+        panelRuntime.lastProjectEnvironmentClassesEvent = null;
       } else {
         panelRuntime.pendingConversationCapture = null;
       }
@@ -758,6 +780,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return { ok: true };
       case "GITPOD_ACCOUNT_CONTEXT":
         await handleGitpodAccountContextMessage(message);
+        return { ok: true };
+      case "GITPOD_PROJECT_ENVIRONMENT_CLASSES":
+        await handleGitpodProjectEnvironmentClassesMessage(message, sender);
         return { ok: true };
       case "ENSURE_ONA_AI_TAG_FOR_ACTIVE_ISSUE":
         return await ensureOnaAiTagForActiveIssue();
