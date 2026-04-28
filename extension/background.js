@@ -133,6 +133,21 @@ function shouldPersistConversationUrl(urlString) {
   return isValidConversationUrl(urlString);
 }
 
+function isStaleEnvironmentRequestForPanel(details, expectedUrl) {
+  if (details.documentId && panelRuntime.gitpodDocumentId) {
+    return details.documentId === panelRuntime.gitpodDocumentId;
+  }
+
+  if (panelRuntime.panelFrameReason === "org-check") return false;
+  if (!panelRuntime.currentIframeUrl) return false;
+  if (!areSameConversationUrl(panelRuntime.currentIframeUrl, expectedUrl)) return false;
+
+  return (
+    panelRuntime.lastObservedGitpodSource === "panel-frame" &&
+    areSameConversationUrl(panelRuntime.lastObservedGitpodUrl, expectedUrl)
+  );
+}
+
 function getActivePendingConversationCapture() {
   const pendingCapture = panelRuntime.pendingConversationCapture;
   if (!pendingCapture) return null;
@@ -718,13 +733,13 @@ async function handlePortMessage(port, message) {
 async function handleStaleEnvironmentRequest(details) {
   if (details.statusCode !== 404) return;
   if (details.frameType && details.frameType !== "sub_frame") return;
-  if (!details.documentId || details.documentId !== panelRuntime.gitpodDocumentId) return;
 
   const issueNumber = panelRuntime.issueNumber;
   if (!issueNumber) return;
 
   const expectedUrl = panelRuntime.expectedFrameUrl;
   if (!expectedUrl || !expectedUrl.startsWith(`${GITPOD_ORIGIN}/details/`)) return;
+  if (!isStaleEnvironmentRequestForPanel(details, expectedUrl)) return;
 
   const conversations = await getConversationCache();
   const savedUrl = conversations[issueNumber];
@@ -738,7 +753,7 @@ async function handleStaleEnvironmentRequest(details) {
     issueNumber,
     url: details.url,
     statusCode: details.statusCode,
-    documentId: details.documentId || null,
+    documentId: details.documentId || panelRuntime.gitpodDocumentId || null,
     timestamp: Date.now(),
   };
 
